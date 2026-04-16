@@ -209,7 +209,6 @@
     const MIN_SLIDE_DURATION = 1.6;
     const MIN_SLIDE_GAP = 1.2;
     const AUDIO_SYNC_THRESHOLD = 0.45;
-    const STORAGE_KEY_API = "videomaker.apiKey";
     const STORAGE_KEY_BUDGET = "videomaker.budget";
 
     const el = {
@@ -247,9 +246,7 @@
     init();
 
     function init() {
-      const savedKey = localStorage.getItem(STORAGE_KEY_API);
       const savedBudget = Number(localStorage.getItem(STORAGE_KEY_BUDGET) || 0);
-      if (savedKey) el.apiKey.value = savedKey;
       if (savedBudget) applyBudget(savedBudget, "Aus LocalStorage geladen.");
 
       el.applyCodeBtn.addEventListener("click", () => {
@@ -295,8 +292,6 @@
         const file = el.voiceInput.files?.[0];
         if (!apiKey) return setStatus("Bitte API Key eingeben.", true);
         if (!file) return setStatus("Bitte zuerst eine MP3 auswählen.", true);
-        localStorage.setItem(STORAGE_KEY_API, apiKey);
-
         const duration = await readAudioDuration(file);
         if (duration > 20 * 60) return setStatus("MP3 ist länger als 20 Minuten.", true);
         state.duration = duration;
@@ -306,7 +301,10 @@
         state.transcript = transcriptData.text;
         const segments = collectSegments(transcriptData, duration);
 
-        setStatus("Ministral erstellt Storyboard und Animation-Plan...");
+        const willTrimTranscript = state.transcript.length > MAX_TRANSCRIPT_CHARS_FOR_PROMPT;
+        setStatus(willTrimTranscript
+          ? "Ministral erstellt Storyboard (Transkript-Auszug für lange Audios)..."
+          : "Ministral erstellt Storyboard und Animation-Plan...");
         const aiSlides = await buildSlidesWithMinistral(state.transcript, segments, duration, apiKey);
         state.slides = normalizeSlides(aiSlides, segments, duration);
 
@@ -317,7 +315,7 @@
 
         el.playPauseBtn.disabled = false;
         el.continueEditBtn.disabled = false;
-        setStatus("Fertig. Vorschau bereit – du kannst jetzt weiter bearbeiten.");
+        setStatus("Fertig. Vorschau bereit – du kannst jetzt weiter bearbeiten. (Visuals: Platzhalterbilder)");
       } catch (error) {
         console.error(error);
         setStatus(`Fehler: ${error.message}`, true);
@@ -622,7 +620,9 @@ ${JSON.stringify(segments.slice(0, 25))}`
         state.voiceAudio.play();
         if (state.musicAudio.src) {
           state.musicAudio.currentTime = state.voiceAudio.currentTime;
-          state.musicAudio.play().catch(() => {});
+          state.musicAudio.play().catch(() => {
+            setStatus("Musik konnte nicht automatisch gestartet werden.", true);
+          });
         }
         el.playPauseBtn.textContent = "Pause";
       } else {
