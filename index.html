@@ -510,6 +510,7 @@
     const MIN_TRANSCRIPT_OVERLAP_THRESHOLD = 0.08;
     const MAX_PPTX_SLIDES = 40;
     const MAX_MULTI_AUDIO_FILES = 8;
+    const MAX_MERGED_AUDIO_SECONDS = 45 * 60;
     const CIRCLE_LABEL_BASE_SIZE = 26;
     const CIRCLE_LABEL_CHAR_FACTOR = 4;
     const METRIC_TOKEN_REGEX = /\b\d{1,3}%\b|\b\d+(?:[.,]\d+)?\s?(?:k|m|x)\b/i;
@@ -763,9 +764,16 @@
       const maxSlide = Math.max(1, Number(slideCount) || 1);
       const maxAudio = Math.max(1, Number(audioCount) || 1);
       mappings.forEach((mapping, idx) => {
-        mapping.audioIndex = clamp(Math.round(Number(mapping.audioIndex) || 0), 0, maxAudio - 1, Math.min(idx, maxAudio - 1));
-        mapping.startSlide = clamp(Math.round(Number(mapping.startSlide) || (idx + 1)), 1, maxSlide, Math.min(idx + 1, maxSlide));
-        mapping.endSlide = clamp(Math.round(Number(mapping.endSlide) || mapping.startSlide), mapping.startSlide, maxSlide, mapping.startSlide);
+        const fallbackAudio = Math.min(idx, maxAudio - 1);
+        const fallbackStart = Math.min(idx + 1, maxSlide);
+        const rawAudioIndex = Math.round(Number(mapping.audioIndex) || fallbackAudio);
+        const rawStart = Math.round(Number(mapping.startSlide) || fallbackStart);
+        const normalizedAudio = clamp(rawAudioIndex, 0, maxAudio - 1, fallbackAudio);
+        const normalizedStart = clamp(rawStart, 1, maxSlide, fallbackStart);
+        const rawEnd = Math.round(Number(mapping.endSlide) || normalizedStart);
+        mapping.audioIndex = normalizedAudio;
+        mapping.startSlide = normalizedStart;
+        mapping.endSlide = clamp(rawEnd, normalizedStart, maxSlide, normalizedStart);
       });
       mappings.sort((a, b) => a.startSlide - b.startSlide || a.endSlide - b.endSlide || a.audioIndex - b.audioIndex);
     }
@@ -975,6 +983,9 @@
         }
         cursor = blockEnd;
       }
+      if (cursor > MAX_MERGED_AUDIO_SECONDS) {
+        throw new Error(`Gesamtlänge der gemappten Audios ist zu groß (${formatTime(cursor)}). Maximal erlaubt: ${formatTime(MAX_MERGED_AUDIO_SECONDS)}.`);
+      }
       const transcript = normalizedMappings.map((mapping) => {
         const source = transcriptions[mapping.audioIndex] || transcriptions[0];
         return source?.transcript || "";
@@ -1004,6 +1015,9 @@
           maxRate = Math.max(maxRate, buf.sampleRate);
         }
         const totalDuration = decoded.reduce((acc, item) => Math.max(acc, item.start + item.buffer.duration), 0);
+        if (totalDuration > MAX_MERGED_AUDIO_SECONDS) {
+          throw new Error(`Zusammengeführte Audio-Länge überschreitet das Limit (${formatTime(MAX_MERGED_AUDIO_SECONDS)}).`);
+        }
         const offline = new OfflineAudioContext(maxChannels, Math.ceil(totalDuration * maxRate), maxRate);
         decoded.forEach(({ start, buffer }) => {
           const source = offline.createBufferSource();
