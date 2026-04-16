@@ -178,6 +178,14 @@
     .timeline span:hover { transform: translateY(-1px); background: #475569; }
     .timeline span.on { background: linear-gradient(90deg, var(--accent), var(--accent-2)); box-shadow: 0 0 0 2px rgba(34, 211, 238, .22); }
     .stage-controls { margin-top: 8px; }
+    .design-tools {
+      margin-top: 6px;
+      padding: 10px;
+      border: 1px solid rgba(71, 85, 105, .8);
+      border-radius: 10px;
+      background: rgba(2, 6, 23, .45);
+    }
+    .design-tools .row > * { min-width: 150px; }
     .slides-list { display: grid; gap: 10px; margin-top: 10px; }
     .slide-item {
       border: 1px solid #2a3a52; border-radius: 11px; padding: 10px;
@@ -185,10 +193,11 @@
       grid-template-columns: 92px 1fr;
       background: rgba(15, 23, 42, .45);
     }
-    .slide-item img {
+    .slide-item img, .slide-item .thumb-gradient {
       width: 92px; height: 64px; object-fit: cover; border-radius: 8px;
       border: 1px solid #334155;
     }
+    .slide-item .thumb-gradient { display: block; }
     .slide-item video {
       width: 92px; height: 64px; object-fit: cover; border-radius: 8px;
       border: 1px solid #334155;
@@ -248,33 +257,57 @@
     }
     .gfx.timeline {
       transform: translate(-50%, -50%);
-      width: min(86%, 680px);
-      min-height: 38px;
-      border-radius: 999px;
+      width: min(90%, 760px);
+      min-height: 52px;
+      border-radius: 14px;
       border: 1px solid rgba(255, 255, 255, .36);
-      background: linear-gradient(90deg, rgba(34,211,238,.25), rgba(167,139,250,.2));
-      padding: 8px 18px;
-      justify-content: space-between;
-      gap: 14px;
+      background: linear-gradient(90deg, rgba(34,211,238,.18), rgba(167,139,250,.15));
+      padding: 12px;
+      justify-content: center;
+      gap: 6px;
       box-shadow: 0 8px 28px rgba(2, 6, 23, .45);
     }
     .gfx.timeline .tick {
       position: relative;
-      font-size: .76rem;
+      font-size: .72rem;
       opacity: .96;
+      min-width: 70px;
+      text-align: center;
+      padding: 7px 10px;
+      color: #e2e8f0;
+      font-weight: 700;
+      clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 50%, calc(100% - 12px) 100%, 0 100%, 10px 50%);
+      background: linear-gradient(90deg, rgba(34,211,238,.65), rgba(217,70,239,.72));
     }
     .gfx.timeline .tick::before {
       content: "";
       position: absolute;
       left: 50%;
       transform: translateX(-50%);
-      top: -11px;
-      width: 7px;
-      height: 7px;
+      top: -16px;
+      width: 8px;
+      height: 8px;
       border-radius: 999px;
       background: white;
-      box-shadow: 0 0 0 4px rgba(255,255,255,.2);
+      box-shadow: 0 0 0 4px rgba(255,255,255,.2), 0 9px 0 -3px rgba(255,255,255,.75);
     }
+    .slide.gradient-bg { background-size: cover; background-position: center; }
+    .drag-handle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: max-content;
+      font-size: .72rem;
+      color: #bae6fd;
+      border: 1px dashed rgba(186, 230, 253, .45);
+      border-radius: 8px;
+      padding: 2px 8px;
+      margin-bottom: 8px;
+      background: rgba(15, 23, 42, .4);
+      cursor: grab;
+      user-select: none;
+    }
+    .drag-handle:active { cursor: grabbing; }
     .slide-item textarea { resize: vertical; min-height: 66px; }
     .muted { color: var(--muted); font-size: .86rem; }
     .warn { color: var(--warn); }
@@ -337,6 +370,23 @@
         <button id="nextSlideBtn" type="button" class="ghost">Weiter ▶</button>
         <div id="activeSlideMeta" class="muted">Slide 0 / 0</div>
       </div>
+      <div class="design-tools">
+        <div class="row compact">
+          <select id="activeBackgroundMode">
+            <option value="media">Aktiver Slide: Bild/Video</option>
+            <option value="gradient">Aktiver Slide: Farbverlauf</option>
+          </select>
+          <select id="gradientPreset">
+            <option value="neon-night">Gradient: Neon Night</option>
+            <option value="sunset-flow">Gradient: Sunset Flow</option>
+            <option value="ocean-mesh">Gradient: Ocean Mesh</option>
+            <option value="violet-spotlight">Gradient: Violet Spotlight</option>
+            <option value="ember-wave">Gradient: Ember Wave</option>
+          </select>
+          <button id="applyGradientBtn" type="button" class="ghost">Gradient anwenden</button>
+          <button id="applyTimelineStyleBtn" type="button" class="ghost">Timeline-Style Boost</button>
+        </div>
+      </div>
       <div class="row compact">
         <select id="renderQuality">
           <option value="draft">Render Qualität: Draft (720p)</option>
@@ -384,6 +434,15 @@
     const SLIDE_EFFECTS = ["fade", "zoom-in", "zoom-out", "pan-left", "pan-right", "pop"];
     const GRAPHIC_TYPES = ["badge", "circle", "timeline"];
     const TEXT_MOTIONS = ["rise", "float", "pulse", "slide"];
+    const BACKGROUND_MODES = ["media", "gradient"];
+    const GRADIENT_PRESETS = {
+      "neon-night": { name: "Neon Night", css: "linear-gradient(120deg, #0f172a 0%, #0b223f 38%, #7c3aed 100%)" },
+      "sunset-flow": { name: "Sunset Flow", css: "linear-gradient(120deg, #ff7e5f 0%, #d946ef 44%, #312e81 100%)" },
+      "ocean-mesh": { name: "Ocean Mesh", css: "radial-gradient(circle at 20% 20%, #67e8f9 0%, transparent 36%), radial-gradient(circle at 82% 10%, #a78bfa 0%, transparent 42%), linear-gradient(125deg, #0c4a6e 0%, #1e1b4b 100%)" },
+      "violet-spotlight": { name: "Violet Spotlight", css: "radial-gradient(circle at 50% 30%, rgba(196,181,253,.75) 0%, rgba(167,139,250,.2) 35%, transparent 62%), linear-gradient(140deg, #0f172a 0%, #312e81 50%, #1d4ed8 100%)" },
+      "ember-wave": { name: "Ember Wave", css: "linear-gradient(120deg, #1f2937 0%, #7c2d12 28%, #dc2626 68%, #fb7185 100%)" }
+    };
+    const DEFAULT_GRADIENT_PRESET = "neon-night";
     const RENDER_PRESETS = {
       draft: { width: 1280, height: 720, bitrate: 3500000, label: "Draft 720p" },
       high: { width: 1920, height: 1080, bitrate: 7000000, label: "High 1080p" }
@@ -411,6 +470,10 @@
       prevSlideBtn: document.getElementById("prevSlideBtn"),
       nextSlideBtn: document.getElementById("nextSlideBtn"),
       activeSlideMeta: document.getElementById("activeSlideMeta"),
+      activeBackgroundMode: document.getElementById("activeBackgroundMode"),
+      gradientPreset: document.getElementById("gradientPreset"),
+      applyGradientBtn: document.getElementById("applyGradientBtn"),
+      applyTimelineStyleBtn: document.getElementById("applyTimelineStyleBtn"),
       renderQuality: document.getElementById("renderQuality"),
       renderBtn: document.getElementById("renderBtn"),
       renderStatus: document.getElementById("renderStatus"),
@@ -426,7 +489,8 @@
       musicAudio: new Audio(),
       duration: 0,
       activeSlide: -1,
-      renderBusy: false
+      renderBusy: false,
+      drag: null
     };
 
     init();
@@ -453,6 +517,10 @@
       el.musicInput.addEventListener("change", onMusicUpload);
       el.imagesInput.addEventListener("change", onMediaUpload);
       el.renderBtn.addEventListener("click", renderProjectVideo);
+      el.applyGradientBtn.addEventListener("click", applyGradientToActiveSlide);
+      el.applyTimelineStyleBtn.addEventListener("click", applyTimelineBoostToActiveSlide);
+      el.activeBackgroundMode.addEventListener("change", onActiveBackgroundModeChange);
+      el.gradientPreset.addEventListener("change", onGradientPresetChange);
       state.voiceAudio.addEventListener("timeupdate", onTimeUpdate);
       state.voiceAudio.addEventListener("ended", () => {
         el.playPauseBtn.textContent = "Wiedergabe";
@@ -460,6 +528,7 @@
       });
       state.musicAudio.loop = true;
       state.musicAudio.volume = DEFAULT_MUSIC_VOLUME;
+      el.gradientPreset.value = DEFAULT_GRADIENT_PRESET;
     }
 
     function setStatus(text, isWarn = false) {
@@ -562,6 +631,8 @@ Gib NUR JSON zurück:
         "visualPrompt":"...",
         "effect":"fade|zoom-in|zoom-out|pan-left|pan-right|pop",
         "textMotion":"rise|float|pulse|slide",
+        "backgroundMode":"media|gradient",
+        "gradientPreset":"neon-night|sunset-flow|ocean-mesh|violet-spotlight|ember-wave",
         "layout":{"x":10,"y":66,"width":64,"align":"left"},
         "graphics":[{"type":"badge|circle|timeline","label":"optional","x":70,"y":24,"size":56,"color":"#22d3ee"}]
        }
@@ -574,6 +645,7 @@ Regeln:
 - VisualPrompt beschreibt passendes Bildmotiv
 - Effekt nur aus: fade, zoom-in, zoom-out, pan-left, pan-right, pop
 - TextMotion nur aus: rise, float, pulse, slide
+- Optional backgroundMode: media oder gradient; bei gradient auch gradientPreset liefern
 - Layout-Werte Prozent (x/y/width), damit Text frei positionierbar ist
 - Optional Graphics für visuelle Elemente, z.B. Timeline
 Auszug Transkript:
@@ -621,6 +693,8 @@ ${JSON.stringify(segments.slice(0, 25))}`
           image: imageFromPrompt(s.visualPrompt || s.title || `slide-${i + 1}`),
           media: imageFromPrompt(s.visualPrompt || s.title || `slide-${i + 1}`),
           mediaType: "image",
+          backgroundMode: normalizeBackgroundMode(s.backgroundMode),
+          gradientPreset: normalizeGradientPreset(s.gradientPreset),
           effect: normalizeEffect(s.effect),
           layout: normalizeLayout(s.layout, i),
           textMotion: normalizeTextMotion(s.textMotion),
@@ -655,6 +729,8 @@ ${JSON.stringify(segments.slice(0, 25))}`
           image: imageFromPrompt(seg.text || `Moodboard scene ${i + 1}`),
           media: imageFromPrompt(seg.text || `Moodboard scene ${i + 1}`),
           mediaType: "image",
+          backgroundMode: "media",
+          gradientPreset: DEFAULT_GRADIENT_PRESET,
           effect: SLIDE_EFFECTS[i % SLIDE_EFFECTS.length],
           layout: normalizeLayout(null, i),
           textMotion: TEXT_MOTIONS[i % TEXT_MOTIONS.length],
@@ -692,12 +768,14 @@ ${JSON.stringify(segments.slice(0, 25))}`
            <div class="overlay"></div>
            <div class="gfx-layer"></div>
            <div class="txt">
+             <div class="drag-handle" title="Text verschieben">✥ ziehen</div>
              <h3 class="txt-title" contenteditable="true" spellcheck="false">${escapeHtml(slide.title)}</h3>
              <p class="txt-body" contenteditable="true" spellcheck="false">${escapeHtml(slide.text)}</p>
-           </div>`;
+            </div>`;
         applySlideMedia(node, slide);
         renderSlideGraphics(node, slide);
         applyTextPresentation(node, slide);
+        attachSlideInteraction(node, idx);
         const titleNode = node.querySelector(".txt-title");
         const textNode = node.querySelector(".txt-body");
         titleNode?.addEventListener("input", () => {
@@ -739,6 +817,12 @@ ${JSON.stringify(segments.slice(0, 25))}`
               <select data-motion="${idx}">
                 ${TEXT_MOTIONS.map((motion) => `<option value="${motion}">${motion}</option>`).join("")}
               </select>
+              <select data-bg-mode="${idx}">
+                ${BACKGROUND_MODES.map((mode) => `<option value="${mode}">${mode}</option>`).join("")}
+              </select>
+              <select data-gradient="${idx}">
+                ${Object.keys(GRADIENT_PRESETS).map((preset) => `<option value="${preset}">${preset}</option>`).join("")}
+              </select>
               <input type="file" accept="image/*,video/*" data-replace-media="${idx}" />
               <button type="button" class="ghost" data-random="${idx}">Premade tauschen</button>
             </div>
@@ -760,11 +844,15 @@ ${JSON.stringify(segments.slice(0, 25))}`
         const textInput = item.querySelector(`textarea[data-text="${idx}"]`);
         const effectInput = item.querySelector(`select[data-effect="${idx}"]`);
         const motionInput = item.querySelector(`select[data-motion="${idx}"]`);
+        const bgModeInput = item.querySelector(`select[data-bg-mode="${idx}"]`);
+        const gradientInput = item.querySelector(`select[data-gradient="${idx}"]`);
         const layoutAlignInput = item.querySelector(`select[data-layout-align="${idx}"]`);
         if (titleInput) titleInput.value = slide.title;
         if (textInput) textInput.value = slide.text;
         if (effectInput) effectInput.value = normalizeEffect(slide.effect);
         if (motionInput) motionInput.value = normalizeTextMotion(slide.textMotion);
+        if (bgModeInput) bgModeInput.value = normalizeBackgroundMode(slide.backgroundMode);
+        if (gradientInput) gradientInput.value = normalizeGradientPreset(slide.gradientPreset);
         if (layoutAlignInput) layoutAlignInput.value = slide.layout.align;
         renderSlideGraphicsEditor(item, idx);
         el.slidesEditor.appendChild(item);
@@ -795,6 +883,27 @@ ${JSON.stringify(segments.slice(0, 25))}`
           const idx = Number(ev.target.getAttribute("data-motion"));
           state.slides[idx].textMotion = normalizeTextMotion(ev.target.value);
           refreshRenderedSlide(idx);
+        });
+      });
+      el.slidesEditor.querySelectorAll("select[data-bg-mode]").forEach((select) => {
+        select.addEventListener("change", (ev) => {
+          const idx = Number(ev.target.getAttribute("data-bg-mode"));
+          const slide = state.slides[idx];
+          if (!slide) return;
+          slide.backgroundMode = normalizeBackgroundMode(ev.target.value);
+          refreshRenderedSlide(idx);
+          syncActiveDesignControls();
+        });
+      });
+      el.slidesEditor.querySelectorAll("select[data-gradient]").forEach((select) => {
+        select.addEventListener("change", (ev) => {
+          const idx = Number(ev.target.getAttribute("data-gradient"));
+          const slide = state.slides[idx];
+          if (!slide) return;
+          slide.gradientPreset = normalizeGradientPreset(ev.target.value);
+          slide.backgroundMode = "gradient";
+          refreshRenderedSlide(idx);
+          syncActiveDesignControls();
         });
       });
       el.slidesEditor.querySelectorAll("input[data-layout-y], input[data-layout-x], input[data-layout-w]").forEach((input) => {
@@ -848,6 +957,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
           const media = await fileToMediaSource(file);
           state.slides[idx].media = media.src;
           state.slides[idx].mediaType = media.type;
+          state.slides[idx].backgroundMode = "media";
           state.slides[idx].image = media.type === "image" ? media.src : state.slides[idx].image;
           state.slides[idx].autoImage = false;
           refreshRenderedSlide(idx);
@@ -861,6 +971,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
           state.slides[idx].image = randomImage;
           state.slides[idx].media = randomImage;
           state.slides[idx].mediaType = "image";
+          state.slides[idx].backgroundMode = "media";
           state.slides[idx].autoImage = true;
           refreshRenderedSlide(idx);
           createSlidesEditor();
@@ -904,6 +1015,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
           if (slide.autoImage && nextCustom) {
             slide.media = nextCustom.src;
             slide.mediaType = nextCustom.type;
+            slide.backgroundMode = "media";
             if (nextCustom.type === "image") slide.image = nextCustom.src;
             slide.autoImage = false;
             customIndex += 1;
@@ -965,6 +1077,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
         node.classList.toggle("on", idx === index);
       });
       el.activeSlideMeta.textContent = `Slide ${index + 1} / ${state.slides.length}`;
+      syncActiveDesignControls();
     }
 
     function jumpToSlide(index) {
@@ -1075,6 +1188,10 @@ ${JSON.stringify(segments.slice(0, 25))}`
     }
 
     function renderMediaThumb(slide, idx) {
+      const mode = normalizeBackgroundMode(slide.backgroundMode);
+      if (mode === "gradient") {
+        return `<span class="thumb-gradient" style="background:${escapeAttr(getGradientCss(slide.gradientPreset))}" title="gradient-${idx + 1}"></span>`;
+      }
       const src = escapeAttr(slide.media || slide.image || "");
       if (slide.mediaType === "video") {
         return `<video src="${src}" muted playsinline preload="metadata"></video>`;
@@ -1083,10 +1200,23 @@ ${JSON.stringify(segments.slice(0, 25))}`
     }
 
     function applySlideMedia(node, slide, isActive = false) {
+      const mode = normalizeBackgroundMode(slide.backgroundMode);
       const mediaType = slide.mediaType === "video" ? "video" : "image";
       const src = slide.media || slide.image || "";
       const bgVideo = node.querySelector(".bg-video");
       if (!bgVideo) return;
+      if (mode === "gradient") {
+        node.classList.remove("video-bg");
+        node.classList.add("gradient-bg");
+        if (bgVideo.src) {
+          bgVideo.pause();
+          bgVideo.removeAttribute("src");
+          bgVideo.load();
+        }
+        node.style.backgroundImage = getGradientCss(slide.gradientPreset);
+        return;
+      }
+      node.classList.remove("gradient-bg");
       if (mediaType === "video" && src) {
         node.classList.add("video-bg");
         node.style.backgroundImage = "none";
@@ -1122,8 +1252,18 @@ ${JSON.stringify(segments.slice(0, 25))}`
       if (!slide) return;
       const titleInput = el.slidesEditor.querySelector(`input[data-title="${slideIndex}"]`);
       const textInput = el.slidesEditor.querySelector(`textarea[data-text="${slideIndex}"]`);
+      const layoutYInput = el.slidesEditor.querySelector(`input[data-layout-y="${slideIndex}"]`);
+      const layoutXInput = el.slidesEditor.querySelector(`input[data-layout-x="${slideIndex}"]`);
+      const layoutWInput = el.slidesEditor.querySelector(`input[data-layout-w="${slideIndex}"]`);
+      const bgModeInput = el.slidesEditor.querySelector(`select[data-bg-mode="${slideIndex}"]`);
+      const gradientInput = el.slidesEditor.querySelector(`select[data-gradient="${slideIndex}"]`);
       if (titleInput && titleInput !== document.activeElement) titleInput.value = slide.title;
       if (textInput && textInput !== document.activeElement) textInput.value = slide.text;
+      if (layoutYInput && layoutYInput !== document.activeElement) layoutYInput.value = String(Math.round(clamp(slide.layout.y, 0, 90)));
+      if (layoutXInput && layoutXInput !== document.activeElement) layoutXInput.value = String(Math.round(clamp(slide.layout.x, 0, 90)));
+      if (layoutWInput && layoutWInput !== document.activeElement) layoutWInput.value = String(Math.round(clamp(slide.layout.width, 30, 95)));
+      if (bgModeInput) bgModeInput.value = normalizeBackgroundMode(slide.backgroundMode);
+      if (gradientInput) gradientInput.value = normalizeGradientPreset(slide.gradientPreset);
       const timelineSeg = el.timeline.querySelectorAll("span")[slideIndex];
       if (timelineSeg) timelineSeg.title = `${slideIndex + 1}: ${slide.title}`;
     }
@@ -1139,6 +1279,119 @@ ${JSON.stringify(segments.slice(0, 25))}`
 
     function normalizeTextMotion(motion) {
       return TEXT_MOTIONS.includes(motion) ? motion : "rise";
+    }
+
+    function normalizeBackgroundMode(mode) {
+      return BACKGROUND_MODES.includes(mode) ? mode : "media";
+    }
+
+    function normalizeGradientPreset(preset) {
+      return GRADIENT_PRESETS[preset] ? preset : DEFAULT_GRADIENT_PRESET;
+    }
+
+    function getGradientCss(preset) {
+      const safe = normalizeGradientPreset(preset);
+      return GRADIENT_PRESETS[safe].css;
+    }
+
+    function onActiveBackgroundModeChange() {
+      const idx = state.activeSlide;
+      if (idx < 0 || !state.slides[idx]) return;
+      state.slides[idx].backgroundMode = normalizeBackgroundMode(el.activeBackgroundMode.value);
+      refreshRenderedSlide(idx);
+      syncEditorSlideFields(idx);
+      createSlidesEditor();
+    }
+
+    function onGradientPresetChange() {
+      const idx = state.activeSlide;
+      if (idx < 0 || !state.slides[idx]) return;
+      state.slides[idx].gradientPreset = normalizeGradientPreset(el.gradientPreset.value);
+      state.slides[idx].backgroundMode = "gradient";
+      el.activeBackgroundMode.value = "gradient";
+      refreshRenderedSlide(idx);
+      syncEditorSlideFields(idx);
+      createSlidesEditor();
+    }
+
+    function applyGradientToActiveSlide() {
+      const idx = state.activeSlide;
+      if (idx < 0 || !state.slides[idx]) return;
+      state.slides[idx].gradientPreset = normalizeGradientPreset(el.gradientPreset.value);
+      state.slides[idx].backgroundMode = "gradient";
+      refreshRenderedSlide(idx);
+      syncEditorSlideFields(idx);
+      createSlidesEditor();
+      setStatus(`Gradient "${GRADIENT_PRESETS[state.slides[idx].gradientPreset].name}" gesetzt.`);
+    }
+
+    function applyTimelineBoostToActiveSlide() {
+      const idx = state.activeSlide;
+      const slide = state.slides[idx];
+      if (!slide) return;
+      const years = Array.from(new Set(`${slide.title} ${slide.text}`.match(/\b(19|20)\d{2}\b/g) || [])).slice(0, 6);
+      slide.graphics = [{
+        type: "timeline",
+        label: years.length >= 3 ? years.join("|") : "2018|2020|2022|2024",
+        x: 50,
+        y: 50,
+        size: 88,
+        color: "#22d3ee"
+      }];
+      slide.gradientPreset = "neon-night";
+      slide.backgroundMode = "gradient";
+      slide.effect = "pan-left";
+      slide.textMotion = "float";
+      refreshRenderedSlide(idx);
+      createSlidesEditor();
+      syncActiveDesignControls();
+      setStatus("Timeline-Style Boost auf aktiven Slide angewendet.");
+    }
+
+    function syncActiveDesignControls() {
+      const idx = state.activeSlide;
+      const slide = state.slides[idx];
+      if (!slide) return;
+      el.activeBackgroundMode.value = normalizeBackgroundMode(slide.backgroundMode);
+      el.gradientPreset.value = normalizeGradientPreset(slide.gradientPreset);
+    }
+
+    function attachSlideInteraction(node, idx) {
+      const txt = node.querySelector(".txt");
+      const handle = node.querySelector(".drag-handle");
+      if (!txt || !handle) return;
+      handle.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault();
+        handle.setPointerCapture(ev.pointerId);
+        const slide = state.slides[idx];
+        if (!slide) return;
+        const rect = node.getBoundingClientRect();
+        state.drag = {
+          idx,
+          pointerId: ev.pointerId,
+          rect,
+          startX: ev.clientX,
+          startY: ev.clientY,
+          startLayout: { ...slide.layout }
+        };
+      });
+      handle.addEventListener("pointermove", (ev) => {
+        if (!state.drag || state.drag.idx !== idx || state.drag.pointerId !== ev.pointerId) return;
+        const slide = state.slides[idx];
+        if (!slide) return;
+        const dxPct = ((ev.clientX - state.drag.startX) / state.drag.rect.width) * 100;
+        const dyPct = ((ev.clientY - state.drag.startY) / state.drag.rect.height) * 100;
+        slide.layout.x = clamp(state.drag.startLayout.x + dxPct, 0, 95);
+        slide.layout.y = clamp(state.drag.startLayout.y + dyPct, 0, 95);
+        applyTextPresentation(node, slide);
+        syncEditorSlideFields(idx);
+      });
+      const endDrag = (ev) => {
+        if (!state.drag || state.drag.idx !== idx || state.drag.pointerId !== ev.pointerId) return;
+        state.drag = null;
+      };
+      handle.addEventListener("pointerup", endDrag);
+      handle.addEventListener("pointercancel", endDrag);
     }
 
     function escapeAttr(value) {
@@ -1346,6 +1599,11 @@ ${JSON.stringify(segments.slice(0, 25))}`
     }
 
     function drawRenderBackground(ctx, width, height, slide, progress, time, mediaCache) {
+      const mode = normalizeBackgroundMode(slide.backgroundMode);
+      if (mode === "gradient") {
+        drawGradientBackground(ctx, width, height, normalizeGradientPreset(slide.gradientPreset));
+        return;
+      }
       const tx = getEffectTransform(slide.effect, progress, width);
       ctx.save();
       ctx.translate(width / 2 + tx.x, height / 2 + tx.y);
@@ -1378,6 +1636,68 @@ ${JSON.stringify(segments.slice(0, 25))}`
       ctx.restore();
     }
 
+    function drawGradientBackground(ctx, width, height, presetKey) {
+      const key = normalizeGradientPreset(presetKey);
+      if (key === "sunset-flow") {
+        const g = ctx.createLinearGradient(0, 0, width, height);
+        g.addColorStop(0, "#ff7e5f");
+        g.addColorStop(0.45, "#d946ef");
+        g.addColorStop(1, "#312e81");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, width, height);
+        return;
+      }
+      if (key === "ocean-mesh") {
+        const base = ctx.createLinearGradient(0, 0, width, height);
+        base.addColorStop(0, "#0c4a6e");
+        base.addColorStop(1, "#1e1b4b");
+        ctx.fillStyle = base;
+        ctx.fillRect(0, 0, width, height);
+        const spotA = ctx.createRadialGradient(width * 0.2, height * 0.2, 0, width * 0.2, height * 0.2, width * 0.48);
+        spotA.addColorStop(0, "rgba(103,232,249,0.62)");
+        spotA.addColorStop(1, "rgba(103,232,249,0)");
+        ctx.fillStyle = spotA;
+        ctx.fillRect(0, 0, width, height);
+        const spotB = ctx.createRadialGradient(width * 0.82, height * 0.12, 0, width * 0.82, height * 0.12, width * 0.5);
+        spotB.addColorStop(0, "rgba(167,139,250,0.6)");
+        spotB.addColorStop(1, "rgba(167,139,250,0)");
+        ctx.fillStyle = spotB;
+        ctx.fillRect(0, 0, width, height);
+        return;
+      }
+      if (key === "violet-spotlight") {
+        const base = ctx.createLinearGradient(0, 0, width, height);
+        base.addColorStop(0, "#0f172a");
+        base.addColorStop(0.5, "#312e81");
+        base.addColorStop(1, "#1d4ed8");
+        ctx.fillStyle = base;
+        ctx.fillRect(0, 0, width, height);
+        const spot = ctx.createRadialGradient(width * 0.5, height * 0.3, 0, width * 0.5, height * 0.3, width * 0.45);
+        spot.addColorStop(0, "rgba(196,181,253,0.75)");
+        spot.addColorStop(0.4, "rgba(167,139,250,0.2)");
+        spot.addColorStop(1, "rgba(167,139,250,0)");
+        ctx.fillStyle = spot;
+        ctx.fillRect(0, 0, width, height);
+        return;
+      }
+      if (key === "ember-wave") {
+        const g = ctx.createLinearGradient(0, 0, width, height);
+        g.addColorStop(0, "#1f2937");
+        g.addColorStop(0.3, "#7c2d12");
+        g.addColorStop(0.68, "#dc2626");
+        g.addColorStop(1, "#fb7185");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, width, height);
+        return;
+      }
+      const g = ctx.createLinearGradient(0, 0, width, height);
+      g.addColorStop(0, "#0f172a");
+      g.addColorStop(0.38, "#0b223f");
+      g.addColorStop(1, "#7c3aed");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, width, height);
+    }
+
     function getEffectTransform(effect, progress, width) {
       const p = clamp(progress, 0, 1, 0);
       if (effect === "zoom-in") return { scale: 1.13 - 0.13 * p, x: 0, y: 0 };
@@ -1404,26 +1724,44 @@ ${JSON.stringify(segments.slice(0, 25))}`
         const color = normalizeColor(graphic.color);
         const pulse = 1 + Math.sin((time + idx * 0.6) * 2) * 0.02;
         if (type === "timeline") {
-          const lineW = Math.min(width * 0.82, 760) * pulse;
-          const lineH = 42;
+          const lineW = Math.min(width * 0.86, 840) * pulse;
+          const lineH = 46;
           const startX = x - lineW / 2;
-          ctx.fillStyle = "rgba(34, 211, 238, 0.24)";
-          ctx.strokeStyle = "rgba(255,255,255,0.45)";
-          ctx.lineWidth = 1.5;
-          roundRect(ctx, startX, y - lineH / 2, lineW, lineH, 22);
-          ctx.fill();
-          ctx.stroke();
           const ticks = String(graphic.label || "Start|Now|Next").split("|").map((s) => s.trim()).filter(Boolean).slice(0, 6);
           if (!ticks.length) return;
+          const segW = lineW / ticks.length;
           ticks.forEach((tick, i) => {
-            const tx = startX + (i / Math.max(1, ticks.length - 1)) * lineW;
+            const segX = startX + i * segW;
+            const segTop = y - lineH / 2;
+            const segRight = segX + segW;
+            const notch = Math.min(14, segW * 0.22);
+            const segGradient = ctx.createLinearGradient(segX, segTop, segRight, segTop);
+            segGradient.addColorStop(0, "rgba(56,189,248,.85)");
+            segGradient.addColorStop(1, "rgba(217,70,239,.85)");
+            ctx.fillStyle = segGradient;
+            ctx.beginPath();
+            ctx.moveTo(segX + (i > 0 ? notch : 0), segTop);
+            ctx.lineTo(segRight - notch, segTop);
+            ctx.lineTo(segRight, segTop + lineH / 2);
+            ctx.lineTo(segRight - notch, segTop + lineH);
+            ctx.lineTo(segX + (i > 0 ? notch : 0), segTop + lineH);
+            if (i > 0) {
+              ctx.lineTo(segX, segTop + lineH / 2);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = "rgba(255,255,255,.28)";
+            ctx.lineWidth = 1.1;
+            ctx.stroke();
+
+            const tx = segX + segW / 2;
             ctx.fillStyle = "rgba(255,255,255,0.95)";
             ctx.beginPath();
-            ctx.arc(tx, y - 10, 4, 0, Math.PI * 2);
+            ctx.arc(tx, y - 24, 4, 0, Math.PI * 2);
             ctx.fill();
-            ctx.font = "600 18px Inter, system-ui, sans-serif";
+            ctx.font = "700 18px Inter, system-ui, sans-serif";
             ctx.textAlign = "center";
-            ctx.fillText(tick.slice(0, 10), tx, y + 13);
+            ctx.fillText(tick.slice(0, 10), tx, y + 7);
           });
           return;
         }
