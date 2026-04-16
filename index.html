@@ -143,7 +143,7 @@
       to { transform: translateY(0); opacity: 1; }
     }
     .txt h3 { margin: 0 0 8px; font-size: clamp(1rem, 2.5vw, 2rem); }
-    .txt p { margin: 0; color: #dbeafe; font-size: clamp(.86rem, 1.4vw, 1.05rem); }
+    .txt p { margin: 0; color: #dbeafe; font-size: clamp(.86rem, 1.4vw, 1.05rem); white-space: pre-line; }
     .txt.motion-float .txt-title { animation: titleFloat 3.2s ease-in-out infinite; }
     .txt.motion-pulse .txt-body { animation: bodyPulse 2.8s ease-in-out infinite; }
     .txt.motion-slide .txt-title,
@@ -240,6 +240,13 @@
       line-height: 1;
       text-shadow: 0 2px 10px rgba(2, 6, 23, .6);
       opacity: .95;
+      animation: gfxPopIn .6s cubic-bezier(.2,.7,.15,1) both;
+      animation-delay: var(--gfx-delay, 0ms);
+      transform-origin: center;
+    }
+    @keyframes gfxPopIn {
+      from { opacity: 0; transform: translate(-50%, -50%) scale(.6); }
+      to { opacity: .95; transform: translate(-50%, -50%) scale(1); }
     }
     .gfx.badge {
       border-radius: 999px;
@@ -322,7 +329,7 @@
       <h1>AI Videomaker (Single HTML)</h1>
       <div class="row">
         <span class="pill">Transcribe: <strong>voxtral-mini-2507</strong></span>
-        <span class="pill">Storyboard: <strong>ministral-8b-2512</strong></span>
+        <span class="pill">Storyboard: <strong>mistral-small-2506</strong></span>
         <span class="pill">Budget: <strong id="budgetBadge">0€</strong></span>
       </div>
     </section>
@@ -423,7 +430,7 @@
 
   <script>
     const VOXTRAL_MODEL = "voxtral-mini-2507";
-    const MINISTRAL_MODEL = "ministral-8b-2512";
+    const MINISTRAL_MODEL = "mistral-small-2506";
     const TRANSCRIBE_ENDPOINT = "https://api.mistral.ai/v1/audio/transcriptions";
     const CHAT_ENDPOINT = "https://api.mistral.ai/v1/chat/completions";
     const DEFAULT_MUSIC_VOLUME = 0.25;
@@ -437,6 +444,7 @@
     const MIN_CROSSFADE_SECONDS = 0.2;
     const MAX_SLIDE_TEXT_CHARS = 420;
     const MAX_RENDER_TEXT_LINES = 6;
+    const MIN_MEANINGFUL_SLIDE_TEXT_CHARS = 90;
     const METRIC_TOKEN_REGEX = /\b\d{1,3}%\b|\b\d+(?:[.,]\d+)?\s?(?:k|m|x)\b/i;
     const MONEY_TOKEN_REGEX = /\b(?:€|\$)\s?\d+(?:[.,]\d+)?\b|\b\d+(?:[.,]\d+)?\s?(?:€|\$)\b/;
     const AUDIO_SYNC_THRESHOLD = 0.45;
@@ -576,8 +584,8 @@
 
         const willTrimTranscript = state.transcript.length > MAX_TRANSCRIPT_CHARS_FOR_PROMPT;
         setStatus(willTrimTranscript
-          ? "Ministral erstellt Storyboard (Transkript-Auszug für lange Audios)..."
-          : "Ministral erstellt Storyboard und Animation-Plan...");
+          ? "Mistral Small erstellt Storyboard (Transkript-Auszug für lange Audios)..."
+          : "Mistral Small erstellt Storyboard und Animation-Plan...");
         const aiSlides = await buildSlidesWithMinistral(state.transcript, segments, duration, apiKey);
         state.slides = normalizeSlides(aiSlides, segments, duration);
 
@@ -657,6 +665,8 @@ Regeln:
 - 7 bis 18 Slides
 - Zeiten lückenlos, logisch, passend zur Story
 - Jede Folie mit klarer Aussage + mehr Inhalt (2-4 kurze Sätze oder Bullet-ähnliche Zeilen)
+- Jede Folie MUSS inhaltlich direkt aus dem Transkript stammen (keine generischen Aussagen, keine Platzhalter)
+- Formuliere sauber mit korrekter Zeichensetzung und natürlich klingender Sprache
 - VisualPrompt beschreibt passendes Bildmotiv
 - Effekt nur aus: fade, zoom-in, zoom-out, pan-left, pan-right, pop
 - TextMotion nur aus: rise, float, pulse, slide
@@ -681,7 +691,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       });
       if (!res.ok) {
         const msg = await safeError(res);
-        throw new Error(`Ministral-Request fehlgeschlagen (${res.status}): ${msg}`);
+        throw new Error(`Mistral-Request fehlgeschlagen (${res.status}): ${msg}`);
       }
       const data = await res.json();
       const raw = data?.choices?.[0]?.message?.content || "";
@@ -701,12 +711,20 @@ ${JSON.stringify(segments.slice(0, 25))}`
         const end = Number(s.end);
         const safeStart = Number.isFinite(start) ? Math.max(0, start) : i * averageSlideDuration;
         const safeEnd = Number.isFinite(end) ? Math.min(duration, end) : safeStart + averageSlideDuration;
+        const title = normalizeSlideTitle(s.title || `Slide ${i + 1}`);
+        const text = composeSlideText({
+          modelText: s.text,
+          title,
+          start: safeStart,
+          end: Math.max(safeStart + MIN_SLIDE_DURATION, safeEnd),
+          segments
+        });
         return {
           start: safeStart,
           end: Math.max(safeStart + MIN_SLIDE_DURATION, safeEnd),
-          title: (s.title || `Slide ${i + 1}`).slice(0, 96),
-          text: (s.text || "").slice(0, MAX_SLIDE_TEXT_CHARS),
-          visualPrompt: (s.visualPrompt || s.title || "creative visual").slice(0, 200),
+          title,
+          text,
+          visualPrompt: (s.visualPrompt || title || "creative visual").slice(0, 200),
           image: imageFromPrompt(s.visualPrompt || s.title || `slide-${i + 1}`),
           media: imageFromPrompt(s.visualPrompt || s.title || `slide-${i + 1}`),
           mediaType: "image",
@@ -715,7 +733,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
           effect: normalizeEffect(s.effect),
           layout: normalizeLayout(s.layout, i),
           textMotion: normalizeTextMotion(s.textMotion),
-          graphics: normalizeGraphics(s.graphics, s.title, s.text, i),
+          graphics: deriveAutoGraphics(title, text, i),
           autoImage: true
         };
       }).sort((a, b) => a.start - b.start);
@@ -754,6 +772,82 @@ ${JSON.stringify(segments.slice(0, 25))}`
           graphics: normalizeGraphics(null, `Kapitel ${i + 1}`, seg.text || "", i)
         };
       });
+    }
+
+    function normalizeSlideTitle(title) {
+      return sanitizeSlideSentence(String(title || "").slice(0, 96)) || "Slide";
+    }
+
+    function composeSlideText({ modelText, title, start, end, segments }) {
+      const cleanedModel = sanitizeSlideText(modelText || "");
+      const fromTranscript = extractRangeText(segments, start, end);
+      const cleanedTranscript = sanitizeSlideText(fromTranscript);
+      let base = cleanedModel;
+      if (cleanedModel.length < MIN_MEANINGFUL_SLIDE_TEXT_CHARS || overlapScore(cleanedModel, cleanedTranscript) < 0.08) {
+        base = cleanedTranscript || cleanedModel;
+      }
+      const lines = toSlideLines(base || title, 4);
+      return lines.map((line) => `• ${line}`).join("\n").slice(0, MAX_SLIDE_TEXT_CHARS);
+    }
+
+    function extractRangeText(segments, start, end) {
+      if (!Array.isArray(segments) || !segments.length) return "";
+      const overlap = segments
+        .filter((seg) => Number(seg.end) >= start - 0.3 && Number(seg.start) <= end + 0.3)
+        .map((seg) => sanitizeSlideSentence(seg.text))
+        .filter(Boolean);
+      if (overlap.length) return overlap.join(" ");
+      const nearest = segments.reduce((best, seg) => {
+        const center = (Number(seg.start) + Number(seg.end)) / 2;
+        return Math.abs(center - start) < Math.abs(best.center - start)
+          ? { center, text: seg.text }
+          : best;
+      }, { center: Number.POSITIVE_INFINITY, text: "" });
+      return sanitizeSlideSentence(nearest.text || "");
+    }
+
+    function sanitizeSlideText(text) {
+      const normalized = String(text || "")
+        .replace(/\s+/g, " ")
+        .replace(/\s+([,.;:!?])/g, "$1")
+        .replace(/([,.;:!?])([A-ZÄÖÜ])/g, "$1 $2")
+        .trim();
+      return normalized;
+    }
+
+    function sanitizeSlideSentence(text) {
+      return sanitizeSlideText(text).replace(/^[-•\d.)\s]+/, "").trim();
+    }
+
+    function toSlideLines(text, maxLines = 4) {
+      const source = sanitizeSlideText(text);
+      const chunks = source
+        .split(/[.!?]\s+|\s*[\n;|]\s*/g)
+        .map((part) => sanitizeSlideSentence(part))
+        .filter((part) => part.length >= 24);
+      if (chunks.length >= 2) return chunks.slice(0, maxLines).map((part) => part.slice(0, 140));
+      const words = source.split(/\s+/).filter(Boolean);
+      const lines = [];
+      let line = [];
+      for (const word of words) {
+        line.push(word);
+        if (line.join(" ").length >= 68) {
+          lines.push(line.join(" ").slice(0, 140));
+          line = [];
+          if (lines.length >= maxLines) break;
+        }
+      }
+      if (line.length && lines.length < maxLines) lines.push(line.join(" ").slice(0, 140));
+      return lines.filter(Boolean);
+    }
+
+    function overlapScore(a, b) {
+      const aa = new Set(String(a || "").toLowerCase().split(/[^a-z0-9äöüß]+/i).filter((w) => w.length >= 4));
+      const bb = new Set(String(b || "").toLowerCase().split(/[^a-z0-9äöüß]+/i).filter((w) => w.length >= 4));
+      if (!aa.size || !bb.size) return 0;
+      let shared = 0;
+      aa.forEach((word) => { if (bb.has(word)) shared += 1; });
+      return shared / Math.max(aa.size, bb.size);
     }
 
     function collectSegments(transcriptData, duration) {
@@ -1646,7 +1740,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       ctx.globalAlpha = alpha;
       drawRenderBackground(ctx, width, height, slide, progress, time, mediaCache);
       drawRenderOverlay(ctx, width, height);
-      drawRenderGraphics(ctx, width, height, slide, time);
+      drawRenderGraphics(ctx, width, height, slide, progress, time);
       drawRenderText(ctx, width, height, slide, progress, time);
       ctx.restore();
     }
@@ -1774,19 +1868,28 @@ ${JSON.stringify(segments.slice(0, 25))}`
       ctx.fillRect(0, 0, width, height);
     }
 
-    function drawRenderGraphics(ctx, width, height, slide, time) {
+    function drawRenderGraphics(ctx, width, height, slide, progress, time) {
       (slide.graphics || []).forEach((graphic, idx) => {
         const type = normalizeGraphicType(graphic.type);
         const x = (clamp(Number(graphic.x), 0, 95, 50) / 100) * width;
         const y = (clamp(Number(graphic.y), 5, 95, 30) / 100) * height;
         const color = normalizeColor(graphic.color);
         const pulse = 1 + Math.sin((time + idx * 0.6) * 2) * 0.02;
+        const appear = smoothstep(clamp(progress * 1.55 - idx * 0.2, 0, 1, 1));
+        ctx.save();
+        ctx.globalAlpha *= appear;
+        ctx.translate(x, y);
+        ctx.scale(0.7 + appear * 0.3, 0.7 + appear * 0.3);
+        ctx.translate(-x, -y);
         if (type === "timeline") {
           const lineW = Math.min(width * 0.86, 840) * pulse;
           const lineH = 46;
           const startX = x - lineW / 2;
           const ticks = String(graphic.label || "Start|Now|Next").split("|").map((s) => s.trim()).filter(Boolean).slice(0, 6);
-          if (!ticks.length) return;
+          if (!ticks.length) {
+            ctx.restore();
+            return;
+          }
           const segW = lineW / ticks.length;
           ticks.forEach((tick, i) => {
             const segX = startX + i * segW;
@@ -1821,6 +1924,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
             ctx.textAlign = "center";
             ctx.fillText(tick.slice(0, 10), tx, y + 7);
           });
+          ctx.restore();
           return;
         }
         if (type === "circle") {
@@ -1832,7 +1936,8 @@ ${JSON.stringify(segments.slice(0, 25))}`
           ctx.font = `700 ${Math.max(12, Math.round(s * 0.26))}px Inter, system-ui, sans-serif`;
           ctx.textAlign = "center";
           ctx.fillStyle = "white";
-          ctx.fillText(String(graphic.label || "●").slice(0, 6), x, y + 5);
+          ctx.fillText(String(graphic.label || "●").slice(0, 8), x, y + 5);
+          ctx.restore();
           return;
         }
         const badgeW = Math.max(120, clamp(Number(graphic.size), 20, 100, 44) * 3) * pulse;
@@ -1846,6 +1951,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
         ctx.textAlign = "center";
         ctx.fillStyle = "white";
         ctx.fillText(String(graphic.label || "Badge").slice(0, 26), x, y + 6);
+        ctx.restore();
       });
     }
 
@@ -1904,24 +2010,29 @@ ${JSON.stringify(segments.slice(0, 25))}`
     }
 
     function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight, maxLines = 4) {
-      const words = String(text || "").split(/\s+/).filter(Boolean);
-      if (!words.length) return 0;
-      let line = "";
       let lines = 0;
-      for (const word of words) {
-        const test = line ? `${line} ${word}` : word;
-        if (ctx.measureText(test).width > maxWidth && line) {
+      const blocks = String(text || "").split(/\n+/).map((part) => part.trim()).filter(Boolean);
+      if (!blocks.length) return 0;
+      for (const block of blocks) {
+        const words = block.split(/\s+/).filter(Boolean);
+        let line = "";
+        for (const word of words) {
+          const test = line ? `${line} ${word}` : word;
+          if (ctx.measureText(test).width > maxWidth && line) {
+            ctx.fillText(line, x, y + lines * lineHeight);
+            line = word;
+            lines += 1;
+            if (lines >= maxLines) break;
+          } else {
+            line = test;
+          }
+        }
+        if (lines >= maxLines) break;
+        if (line) {
           ctx.fillText(line, x, y + lines * lineHeight);
-          line = word;
           lines += 1;
           if (lines >= maxLines) break;
-        } else {
-          line = test;
         }
-      }
-      if (lines < maxLines && line) {
-        ctx.fillText(line, x, y + lines * lineHeight);
-        lines += 1;
       }
       return lines;
     }
@@ -1975,6 +2086,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       const timelineLabels = extractTimelineLabels(content);
       const metric = content.match(METRIC_TOKEN_REGEX)?.[0];
       const money = content.match(MONEY_TOKEN_REGEX)?.[0];
+      const keywords = extractTopicKeywords(content);
       const list = [];
       if (timelineLabels.length >= 3) {
         list.push({
@@ -1989,7 +2101,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       if (metric) {
         list.push({
           type: "circle",
-          label: metric.replace(/\s+/g, "").slice(0, 6),
+          label: metric.replace(/\s+/g, "").slice(0, 8),
           x: timelineLabels.length >= 3 ? 84 : 78,
           y: timelineLabels.length >= 3 ? 24 : 26,
           size: timelineLabels.length >= 3 ? 72 : 76,
@@ -2006,24 +2118,34 @@ ${JSON.stringify(segments.slice(0, 25))}`
           color: "#f59e0b"
         });
       }
+      if (keywords.length) {
+        list.push({
+          type: "badge",
+          label: keywords[0].slice(0, 24),
+          x: timelineLabels.length >= 3 ? 18 : 74,
+          y: timelineLabels.length >= 3 ? 80 : 76,
+          size: 58,
+          color: "#22d3ee"
+        });
+      }
       if (list.length) return list.slice(0, 3);
-      if (idx % 3 === 0) {
+      if (keywords.length > 1) {
         return [{
           type: "badge",
-          label: "Highlight",
-          x: 78,
-          y: 20,
+          label: `${keywords[0]} · ${keywords[1]}`.slice(0, 26),
+          x: idx % 2 ? 18 : 78,
+          y: 22,
           size: 52,
           color: "#a78bfa"
         }];
       }
-      if (idx % 2 === 1) {
+      if (idx % 3 === 0) {
         return [{
-          type: "circle",
-          label: "Kern",
-          x: 82,
-          y: 24,
-          size: 64,
+          type: "badge",
+          label: "Kernaussage",
+          x: idx % 2 ? 20 : 78,
+          y: 22,
+          size: 50,
           color: "#22d3ee"
         }];
       }
@@ -2042,6 +2164,20 @@ ${JSON.stringify(segments.slice(0, 25))}`
         .slice(0, 6);
       if (steps.length >= 3) return steps.map((step) => step.slice(0, 10));
       return [];
+    }
+
+    function extractTopicKeywords(content) {
+      const stop = new Set([
+        "und", "oder", "aber", "auch", "eine", "einer", "einem", "einen", "der", "die", "das", "den", "dem",
+        "mit", "von", "für", "auf", "ist", "sind", "nicht", "dass", "dies", "diese", "dieser", "wie", "mehr",
+        "video", "folie", "slide", "kapitel", "thema", "sehr", "über", "unter", "beim", "zum", "zur", "wir"
+      ]);
+      const tokens = String(content || "")
+        .toLowerCase()
+        .split(/[^a-z0-9äöüß-]+/i)
+        .map((w) => w.trim())
+        .filter((w) => w.length >= 5 && !stop.has(w));
+      return Array.from(new Set(tokens)).slice(0, 4).map((w) => w.charAt(0).toUpperCase() + w.slice(1));
     }
 
     function defaultGraphic(type, idx) {
@@ -2094,10 +2230,11 @@ ${JSON.stringify(segments.slice(0, 25))}`
       if (!layer) return;
       layer.innerHTML = "";
       const graphics = Array.isArray(slide.graphics) ? slide.graphics : [];
-      graphics.forEach((graphic) => {
+      graphics.forEach((graphic, gIdx) => {
         const type = normalizeGraphicType(graphic.type);
         const g = document.createElement("div");
         g.className = `gfx ${type}`;
+        g.style.setProperty("--gfx-delay", `${gIdx * 130}ms`);
         g.style.left = `${clamp(Number(graphic.x), 0, 95, 50)}%`;
         g.style.top = `${clamp(Number(graphic.y), 0, 95, 30)}%`;
         g.style.background = graphic.color || "#22d3ee";
@@ -2105,7 +2242,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
           const s = clamp(Number(graphic.size), 20, 100, 44);
           g.style.width = `${s}px`;
           g.style.height = `${s}px`;
-          g.textContent = (graphic.label || "●").slice(0, 6);
+          g.textContent = (graphic.label || "●").slice(0, 8);
         } else if (type === "timeline") {
           const years = String(graphic.label || "Start|Now|Next").split("|").map((y) => y.trim()).filter(Boolean).slice(0, 6);
           years.forEach((year) => {
