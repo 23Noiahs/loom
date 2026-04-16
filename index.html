@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Videomaker – Single File</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #111827;
+      --line: #1f2937;
+      --text: #e5e7eb;
+      --muted: #9ca3af;
+      --accent: #22d3ee;
+      --ok: #34d399;
+      --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, Arial, sans-serif;
+      background: linear-gradient(180deg, #020617, var(--bg));
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .container {
+      width: min(1200px, 96vw);
+      margin: 20px auto 30px;
+      display: grid;
+      gap: 16px;
+    }
+    .card {
+      background: rgba(17, 24, 39, .9);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    h1, h2 { margin: 0 0 10px; }
+    h1 { font-size: 1.35rem; }
+    h2 { font-size: 1rem; color: #c7d2fe; }
+    .grid { display: grid; gap: 10px; }
+    .grid.two { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+    label { font-size: .9rem; color: var(--muted); display: block; margin-bottom: 6px; }
+    input, button, select, textarea {
+      width: 100%;
+      border: 1px solid #334155;
+      background: #0b1220;
+      color: var(--text);
+      border-radius: 9px;
+      padding: 10px 11px;
+      font: inherit;
+    }
+    button {
+      cursor: pointer;
+      background: linear-gradient(90deg, #0ea5e9, #22d3ee);
+      color: #031422;
+      border: none;
+      font-weight: 700;
+    }
+    button.ghost {
+      background: #111827;
+      border: 1px solid #334155;
+      color: var(--text);
+      font-weight: 600;
+    }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .row { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+    .row > * { flex: 1; min-width: 180px; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      border: 1px solid #334155; border-radius: 100px; padding: 5px 11px;
+      color: #cbd5e1; font-size: .84rem;
+    }
+    .status { font-size: .92rem; color: #93c5fd; white-space: pre-wrap; }
+    .video-stage {
+      width: 100%; aspect-ratio: 16 / 9; border-radius: 12px;
+      border: 1px solid #334155; overflow: hidden; background: #020617;
+      position: relative;
+    }
+    .slide {
+      position: absolute; inset: 0;
+      opacity: 0; transform: scale(1.04);
+      transition: opacity .55s ease, transform .8s ease;
+      background-size: cover; background-position: center;
+      display: grid; align-content: end;
+      padding: clamp(12px, 3vw, 30px);
+    }
+    .slide.active { opacity: 1; transform: scale(1); }
+    .overlay {
+      background: linear-gradient(180deg, transparent 10%, rgba(2, 6, 23, .84) 68%);
+      position: absolute; inset: 0;
+    }
+    .txt {
+      position: relative; z-index: 1;
+      max-width: 74%;
+      animation: rise .65s ease both;
+    }
+    @keyframes rise {
+      from { transform: translateY(22px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .txt h3 { margin: 0 0 8px; font-size: clamp(1rem, 2.5vw, 2rem); }
+    .txt p { margin: 0; color: #dbeafe; font-size: clamp(.86rem, 1.4vw, 1.05rem); }
+    .timeline {
+      display: flex; gap: 6px; height: 12px;
+      background: #020617; border: 1px solid #334155; border-radius: 999px;
+      padding: 2px;
+    }
+    .timeline span {
+      display: block; height: 100%; border-radius: 999px; background: #334155;
+      transition: background .2s;
+    }
+    .timeline span.on { background: #22d3ee; }
+    .slides-list { display: grid; gap: 10px; margin-top: 10px; }
+    .slide-item {
+      border: 1px solid #2a3a52; border-radius: 11px; padding: 10px;
+      display: grid; gap: 10px;
+      grid-template-columns: 92px 1fr;
+    }
+    .slide-item img {
+      width: 92px; height: 64px; object-fit: cover; border-radius: 8px;
+      border: 1px solid #334155;
+    }
+    .muted { color: var(--muted); font-size: .86rem; }
+    .warn { color: var(--warn); }
+    .ok { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="card">
+      <h1>AI Videomaker (Single HTML)</h1>
+      <div class="row">
+        <span class="pill">Transcribe: <strong>voxtral-mini-transcribe-realtime-2602</strong></span>
+        <span class="pill">Storyboard: <strong>ministral-8b-2512</strong></span>
+        <span class="pill">Budget: <strong id="budgetBadge">0€</strong></span>
+      </div>
+    </section>
+
+    <section class="card grid two">
+      <div>
+        <h2>Settings</h2>
+        <label for="apiKey">API Key</label>
+        <input id="apiKey" type="password" placeholder="mistral-..." autocomplete="off" />
+      </div>
+      <div>
+        <h2>Freischalt-Code</h2>
+        <label for="codeInput">Code eingeben (Enya26 / enya30)</label>
+        <div class="row">
+          <input id="codeInput" type="text" placeholder="Enya26" />
+          <button id="applyCodeBtn" class="ghost">Code anwenden</button>
+        </div>
+        <div id="codeStatus" class="muted">Noch kein Budget aktiviert.</div>
+      </div>
+    </section>
+
+    <section class="card grid">
+      <h2>1) MP3 hochladen und AI Video erstellen</h2>
+      <label for="voiceInput">Voice MP3 (max. 20 Minuten)</label>
+      <input id="voiceInput" type="file" accept="audio/mpeg,audio/mp3" />
+      <div class="row">
+        <button id="generateBtn">Jetzt analysieren & Video bauen</button>
+        <button id="playPauseBtn" class="ghost" disabled>Play/Pause</button>
+      </div>
+      <div class="row">
+        <div>
+          <label for="seekBar">Zeitleiste</label>
+          <input id="seekBar" type="range" value="0" min="0" max="1000" />
+        </div>
+      </div>
+      <div id="status" class="status">Bereit.</div>
+    </section>
+
+    <section class="card grid">
+      <h2>Preview</h2>
+      <div id="videoStage" class="video-stage"></div>
+      <div id="timeline" class="timeline"></div>
+      <div id="timelineMeta" class="muted">Noch keine Slides.</div>
+    </section>
+
+    <section class="card grid">
+      <div class="row">
+        <h2 style="margin:0">2) Weiter bearbeiten</h2>
+        <button id="continueEditBtn" class="ghost" disabled>Weiter bearbeiten</button>
+      </div>
+      <div id="editPanel" style="display:none" class="grid two">
+        <div class="grid">
+          <label for="musicInput">Musikspur hinzufügen</label>
+          <input id="musicInput" type="file" accept="audio/*" />
+          <p class="muted">Die Musikspur wird intelligent unter der Sprachspur abgespielt.</p>
+        </div>
+        <div class="grid">
+          <label for="imagesInput">Eigene Bilder hochladen</label>
+          <input id="imagesInput" type="file" accept="image/*" multiple />
+          <p class="muted">Du kannst fertige Bilder pro Slide ersetzen.</p>
+        </div>
+      </div>
+      <div id="slidesEditor" class="slides-list"></div>
+    </section>
+  </div>
+
+  <script>
+    const VOXTRAL_MODEL = "voxtral-mini-transcribe-realtime-2602";
+    const MINISTRAL_MODEL = "ministral-8b-2512";
+    const TRANSCRIBE_ENDPOINT = "https://api.mistral.ai/v1/audio/transcriptions";
+    const CHAT_ENDPOINT = "https://api.mistral.ai/v1/chat/completions";
+
+    const el = {
+      apiKey: document.getElementById("apiKey"),
+      codeInput: document.getElementById("codeInput"),
+      applyCodeBtn: document.getElementById("applyCodeBtn"),
+      codeStatus: document.getElementById("codeStatus"),
+      budgetBadge: document.getElementById("budgetBadge"),
+      voiceInput: document.getElementById("voiceInput"),
+      generateBtn: document.getElementById("generateBtn"),
+      playPauseBtn: document.getElementById("playPauseBtn"),
+      continueEditBtn: document.getElementById("continueEditBtn"),
+      editPanel: document.getElementById("editPanel"),
+      musicInput: document.getElementById("musicInput"),
+      imagesInput: document.getElementById("imagesInput"),
+      status: document.getElementById("status"),
+      videoStage: document.getElementById("videoStage"),
+      timeline: document.getElementById("timeline"),
+      timelineMeta: document.getElementById("timelineMeta"),
+      seekBar: document.getElementById("seekBar"),
+      slidesEditor: document.getElementById("slidesEditor")
+    };
+
+    const state = {
+      budget: 0,
+      transcript: "",
+      slides: [],
+      customImages: [],
+      voiceAudio: new Audio(),
+      musicAudio: new Audio(),
+      duration: 0,
+      activeSlide: -1
+    };
+
+    init();
+
+    function init() {
+      const savedKey = localStorage.getItem("loom.apiKey");
+      const savedBudget = Number(localStorage.getItem("loom.budget") || 0);
+      if (savedKey) el.apiKey.value = savedKey;
+      if (savedBudget) applyBudget(savedBudget, "Aus LocalStorage geladen.");
+
+      el.applyCodeBtn.addEventListener("click", () => {
+        const code = el.codeInput.value.trim().toLowerCase();
+        if (code === "enya26") return applyBudget(5, "Code Enya26 aktiv. Budget = 5€.");
+        if (code === "enya30") return applyBudget(20, "Code enya30 aktiv. Budget = 20€.");
+        applyBudget(0, "Ungültiger Code.", true);
+      });
+
+      el.generateBtn.addEventListener("click", generateVideoFlow);
+      el.playPauseBtn.addEventListener("click", togglePlayPause);
+      el.continueEditBtn.addEventListener("click", () => {
+        el.editPanel.style.display = "grid";
+      });
+      el.seekBar.addEventListener("input", onSeek);
+      el.musicInput.addEventListener("change", onMusicUpload);
+      el.imagesInput.addEventListener("change", onImagesUpload);
+      state.voiceAudio.addEventListener("timeupdate", onTimeUpdate);
+      state.voiceAudio.addEventListener("ended", () => {
+        el.playPauseBtn.textContent = "Play";
+        if (state.musicAudio.src) state.musicAudio.pause();
+      });
+      state.musicAudio.loop = true;
+      state.musicAudio.volume = 0.25;
+    }
+
+    function setStatus(text, isWarn = false) {
+      el.status.textContent = text;
+      el.status.className = `status ${isWarn ? "warn" : ""}`;
+    }
+
+    function applyBudget(value, message, isWarn = false) {
+      state.budget = value;
+      el.budgetBadge.textContent = `${value}€`;
+      el.codeStatus.textContent = message;
+      el.codeStatus.className = isWarn ? "muted warn" : "muted ok";
+      localStorage.setItem("loom.budget", String(value));
+    }
+
+    async function generateVideoFlow() {
+      try {
+        const apiKey = el.apiKey.value.trim();
+        const file = el.voiceInput.files?.[0];
+        if (!apiKey) return setStatus("Bitte API Key eingeben.", true);
+        if (!file) return setStatus("Bitte zuerst eine MP3 auswählen.", true);
+        localStorage.setItem("loom.apiKey", apiKey);
+
+        const duration = await readAudioDuration(file);
+        if (duration > 20 * 60) return setStatus("MP3 ist länger als 20 Minuten.", true);
+        state.duration = duration;
+
+        toggleWorking(true, "Voxtral analysiert die MP3...");
+        const transcriptData = await transcribeWithVoxtral(file, apiKey);
+        state.transcript = transcriptData.text;
+        const segments = collectSegments(transcriptData, duration);
+
+        setStatus("Ministral erstellt Storyboard und Animation-Plan...");
+        const aiSlides = await buildSlidesWithMinistral(state.transcript, segments, duration, apiKey);
+        state.slides = normalizeSlides(aiSlides, segments, duration);
+
+        createStageAndTimeline();
+        createSlidesEditor();
+        const voiceURL = URL.createObjectURL(file);
+        state.voiceAudio.src = voiceURL;
+
+        el.playPauseBtn.disabled = false;
+        el.continueEditBtn.disabled = false;
+        setStatus("Fertig. Vorschau bereit – du kannst jetzt weiter bearbeiten.");
+      } catch (error) {
+        console.error(error);
+        setStatus(`Fehler: ${error.message}`, true);
+      } finally {
+        toggleWorking(false);
+      }
+    }
+
+    function toggleWorking(isBusy, text = "") {
+      el.generateBtn.disabled = isBusy;
+      if (isBusy && text) setStatus(text);
+    }
+
+    async function transcribeWithVoxtral(file, apiKey) {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("model", VOXTRAL_MODEL);
+      formData.append("response_format", "verbose_json");
+      const res = await fetch(TRANSCRIBE_ENDPOINT, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: formData
+      });
+      if (!res.ok) {
+        const msg = await safeError(res);
+        throw new Error(`Voxtral-Request fehlgeschlagen (${res.status}): ${msg}`);
+      }
+      const data = await res.json();
+      if (!data?.text) throw new Error("Kein Transkript erhalten.");
+      return data;
+    }
+
+    async function buildSlidesWithMinistral(transcript, segments, duration, apiKey) {
+      const shortTranscript = transcript.slice(0, 10000);
+      const payload = {
+        model: MINISTRAL_MODEL,
+        messages: [
+          {
+            role: "system",
+            content: "You design video slides. Return strict JSON only."
+          },
+          {
+            role: "user",
+            content:
+`Erstelle einen intelligenten Folien-Video-Plan zu einem Audio-Transkript.
+Länge in Sekunden: ${Math.round(duration)}.
+Gib NUR JSON zurück:
+{
+  "slides":[
+    {
+      "start":0,
+      "end":8,
+      "title":"...",
+      "text":"...",
+      "visualPrompt":"..."
+    }
+  ]
+}
+Regeln:
+- 5 bis 14 Slides
+- Zeiten lückenlos, logisch, passend zur Story
+- Text kurz, modern, animaker-style
+- VisualPrompt beschreibt passendes Bildmotiv
+Auszug Transkript:
+${shortTranscript}
+Segmenthilfe:
+${JSON.stringify(segments.slice(0, 25))}`
+          }
+        ],
+        temperature: 0.2
+      };
+      const res = await fetch(CHAT_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const msg = await safeError(res);
+        throw new Error(`Ministral-Request fehlgeschlagen (${res.status}): ${msg}`);
+      }
+      const data = await res.json();
+      const raw = data?.choices?.[0]?.message?.content || "";
+      const parsed = parseJsonFromLLM(raw);
+      return parsed?.slides || [];
+    }
+
+    function normalizeSlides(aiSlides, segments, duration) {
+      let slides = Array.isArray(aiSlides) ? aiSlides.filter(Boolean) : [];
+      if (!slides.length) slides = fallbackSlides(segments, duration);
+
+      slides = slides.map((s, i) => {
+        const start = Number(s.start);
+        const end = Number(s.end);
+        const safeStart = Number.isFinite(start) ? Math.max(0, start) : i * (duration / Math.max(1, slides.length));
+        const safeEnd = Number.isFinite(end) ? Math.min(duration, end) : safeStart + duration / Math.max(1, slides.length);
+        return {
+          start: safeStart,
+          end: Math.max(safeStart + 1.6, safeEnd),
+          title: (s.title || `Slide ${i + 1}`).slice(0, 80),
+          text: (s.text || "").slice(0, 240),
+          visualPrompt: (s.visualPrompt || s.title || "creative visual").slice(0, 200),
+          image: imageFromPrompt(s.visualPrompt || s.title || `slide-${i + 1}`)
+        };
+      }).sort((a, b) => a.start - b.start);
+
+      slides[0].start = 0;
+      for (let i = 1; i < slides.length; i++) {
+        if (slides[i].start < slides[i - 1].end) slides[i].start = slides[i - 1].end;
+      }
+      for (let i = 0; i < slides.length - 1; i++) {
+        if (slides[i].end > slides[i + 1].start) slides[i].end = slides[i + 1].start;
+        slides[i].end = Math.max(slides[i].start + 1.2, slides[i].end);
+      }
+      slides[slides.length - 1].end = duration;
+      return slides;
+    }
+
+    function fallbackSlides(segments, duration) {
+      const count = Math.min(10, Math.max(5, Math.ceil(duration / 18)));
+      const slice = duration / count;
+      return Array.from({ length: count }, (_, i) => {
+        const seg = segments[Math.min(i, segments.length - 1)] || {};
+        return {
+          start: i * slice,
+          end: (i + 1) * slice,
+          title: `Kapitel ${i + 1}`,
+          text: (seg.text || "").slice(0, 180),
+          visualPrompt: seg.text || `Moodboard scene ${i + 1}`
+        };
+      });
+    }
+
+    function collectSegments(transcriptData, duration) {
+      if (Array.isArray(transcriptData?.segments) && transcriptData.segments.length) {
+        return transcriptData.segments.map((s) => ({
+          start: Number(s.start) || 0,
+          end: Number(s.end) || 0,
+          text: s.text || ""
+        }));
+      }
+      const text = transcriptData?.text || "";
+      const bits = text.split(/[.!?]\s+/).filter(Boolean);
+      const per = duration / Math.max(1, bits.length);
+      return bits.map((t, i) => ({ start: i * per, end: (i + 1) * per, text: t }));
+    }
+
+    function createStageAndTimeline() {
+      el.videoStage.innerHTML = "";
+      el.timeline.innerHTML = "";
+      state.activeSlide = -1;
+      const dur = Math.max(1, state.duration);
+
+      state.slides.forEach((slide, idx) => {
+        const node = document.createElement("article");
+        node.className = "slide";
+        node.dataset.index = String(idx);
+        node.style.backgroundImage = `url("${slide.image}")`;
+        node.innerHTML =
+          `<div class="overlay"></div>
+           <div class="txt">
+             <h3>${escapeHtml(slide.title)}</h3>
+             <p>${escapeHtml(slide.text)}</p>
+           </div>`;
+        el.videoStage.appendChild(node);
+
+        const seg = document.createElement("span");
+        const segDur = Math.max(0.01, slide.end - slide.start);
+        seg.style.width = `${(segDur / dur) * 100}%`;
+        el.timeline.appendChild(seg);
+      });
+      el.timelineMeta.textContent = `${state.slides.length} Slides · ${formatTime(dur)} Gesamtlänge`;
+      activateSlide(0);
+    }
+
+    function createSlidesEditor() {
+      el.slidesEditor.innerHTML = "";
+      state.slides.forEach((slide, idx) => {
+        const item = document.createElement("div");
+        item.className = "slide-item";
+        item.innerHTML = `
+          <img src="${slide.image}" alt="slide-${idx + 1}" />
+          <div class="grid">
+            <strong>${escapeHtml(slide.title)}</strong>
+            <span class="muted">${formatTime(slide.start)} - ${formatTime(slide.end)}</span>
+            <div class="row">
+              <input type="file" accept="image/*" data-replace="${idx}" />
+              <button type="button" class="ghost" data-random="${idx}">Premade tauschen</button>
+            </div>
+          </div>`;
+        el.slidesEditor.appendChild(item);
+      });
+      el.slidesEditor.querySelectorAll("input[data-replace]").forEach((input) => {
+        input.addEventListener("change", async (ev) => {
+          const idx = Number(ev.target.getAttribute("data-replace"));
+          const file = ev.target.files?.[0];
+          if (!file) return;
+          state.slides[idx].image = await fileToDataURL(file);
+          refreshRenderedSlide(idx);
+          createSlidesEditor();
+        });
+      });
+      el.slidesEditor.querySelectorAll("button[data-random]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = Number(btn.getAttribute("data-random"));
+          state.slides[idx].image = imageFromPrompt(`${state.slides[idx].visualPrompt}-${Date.now()}`);
+          refreshRenderedSlide(idx);
+          createSlidesEditor();
+        });
+      });
+    }
+
+    function refreshRenderedSlide(index) {
+      const node = el.videoStage.querySelector(`.slide[data-index="${index}"]`);
+      if (!node) return;
+      node.style.backgroundImage = `url("${state.slides[index].image}")`;
+    }
+
+    async function onMusicUpload() {
+      const file = el.musicInput.files?.[0];
+      if (!file) return;
+      if (state.musicAudio.src) URL.revokeObjectURL(state.musicAudio.src);
+      state.musicAudio.src = URL.createObjectURL(file);
+      state.musicAudio.currentTime = 0;
+      setStatus("Musikspur geladen.");
+    }
+
+    async function onImagesUpload() {
+      const files = Array.from(el.imagesInput.files || []);
+      if (!files.length) return;
+      const urls = await Promise.all(files.map(fileToDataURL));
+      state.customImages.push(...urls);
+      setStatus(`${files.length} eigene Bilder hinzugefügt.`);
+      if (state.customImages.length && state.slides.length) {
+        state.slides.forEach((slide, i) => {
+          if (!slide.image && state.customImages[i]) slide.image = state.customImages[i];
+        });
+        createSlidesEditor();
+      }
+    }
+
+    function onSeek() {
+      if (!state.duration) return;
+      const ratio = Number(el.seekBar.value) / 1000;
+      const t = ratio * state.duration;
+      state.voiceAudio.currentTime = t;
+      if (state.musicAudio.src) state.musicAudio.currentTime = t;
+      activateSlideByTime(t);
+    }
+
+    function onTimeUpdate() {
+      const dur = Math.max(1, state.duration);
+      const t = state.voiceAudio.currentTime || 0;
+      el.seekBar.value = String(Math.floor((t / dur) * 1000));
+      activateSlideByTime(t);
+      if (state.musicAudio.src && Math.abs(state.musicAudio.currentTime - t) > 0.45) {
+        state.musicAudio.currentTime = t;
+      }
+    }
+
+    function activateSlideByTime(t) {
+      const idx = state.slides.findIndex((s, i) => t >= s.start && (i === state.slides.length - 1 ? t <= s.end : t < s.end));
+      activateSlide(Math.max(0, idx));
+    }
+
+    function activateSlide(index) {
+      if (index === state.activeSlide) return;
+      state.activeSlide = index;
+      el.videoStage.querySelectorAll(".slide").forEach((node, idx) => {
+        node.classList.toggle("active", idx === index);
+      });
+      el.timeline.querySelectorAll("span").forEach((node, idx) => {
+        node.classList.toggle("on", idx === index);
+      });
+    }
+
+    function togglePlayPause() {
+      if (!state.voiceAudio.src) return;
+      if (state.voiceAudio.paused) {
+        state.voiceAudio.play();
+        if (state.musicAudio.src) {
+          state.musicAudio.currentTime = state.voiceAudio.currentTime;
+          state.musicAudio.play().catch(() => {});
+        }
+        el.playPauseBtn.textContent = "Pause";
+      } else {
+        state.voiceAudio.pause();
+        if (state.musicAudio.src) state.musicAudio.pause();
+        el.playPauseBtn.textContent = "Play";
+      }
+    }
+
+    function parseJsonFromLLM(raw) {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        if (fenced?.[1]) {
+          try { return JSON.parse(fenced[1]); } catch {}
+        }
+        const start = raw.indexOf("{");
+        const end = raw.lastIndexOf("}");
+        if (start >= 0 && end > start) {
+          try { return JSON.parse(raw.slice(start, end + 1)); } catch {}
+        }
+      }
+      return null;
+    }
+
+    async function readAudioDuration(file) {
+      const url = URL.createObjectURL(file);
+      try {
+        const audio = new Audio(url);
+        await new Promise((resolve, reject) => {
+          audio.addEventListener("loadedmetadata", resolve, { once: true });
+          audio.addEventListener("error", () => reject(new Error("Audio konnte nicht gelesen werden.")), { once: true });
+        });
+        return audio.duration || 0;
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    function imageFromPrompt(prompt) {
+      const seed = encodeURIComponent((prompt || "scene").slice(0, 80));
+      return `https://picsum.photos/seed/${seed}/1280/720`;
+    }
+
+    function formatTime(sec) {
+      const s = Math.max(0, Math.floor(sec || 0));
+      const m = Math.floor(s / 60);
+      const r = s % 60;
+      return `${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function fileToDataURL(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Datei konnte nicht geladen werden."));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function safeError(res) {
+      try {
+        const text = await res.text();
+        return text.slice(0, 220);
+      } catch {
+        return "Unbekannter Fehler";
+      }
+    }
+  </script>
+</body>
+</html>
