@@ -431,7 +431,9 @@
     const MIN_SLIDE_DURATION = 1.6;
     const MIN_SLIDE_GAP = 1.2;
     const RENDER_TRANSITION_SECONDS = 0.55;
+    const RENDER_TRANSITION_RATIO = 0.22;
     const MAX_SLIDE_TEXT_CHARS = 420;
+    const MAX_RENDER_TEXT_LINES = 6;
     const AUDIO_SYNC_THRESHOLD = 0.45;
     const STORAGE_KEY_BUDGET = "videomaker.budget";
     const SLIDE_EFFECTS = ["fade", "zoom-in", "zoom-out", "pan-left", "pan-right", "pop"];
@@ -791,7 +793,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
           syncEditorSlideFields(idx);
         });
         textNode?.addEventListener("input", () => {
-          state.slides[idx].text = String(textNode.textContent || "").slice(0, 240);
+          state.slides[idx].text = String(textNode.textContent || "").slice(0, MAX_SLIDE_TEXT_CHARS);
           syncEditorSlideFields(idx);
         });
         el.videoStage.appendChild(node);
@@ -817,7 +819,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
           <div class="grid">
             <span class="muted">${formatTime(slide.start)} - ${formatTime(slide.end)}</span>
             <input type="text" data-title="${idx}" maxlength="80" placeholder="Titel" />
-            <textarea data-text="${idx}" maxlength="240" placeholder="Slide Text"></textarea>
+            <textarea data-text="${idx}" maxlength="${MAX_SLIDE_TEXT_CHARS}" placeholder="Slide Text"></textarea>
             <div class="row">
               <select data-effect="${idx}">
                 ${SLIDE_EFFECTS.map((effect) => `<option value="${effect}">${effect}</option>`).join("")}
@@ -875,7 +877,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       el.slidesEditor.querySelectorAll("textarea[data-text]").forEach((input) => {
         input.addEventListener("input", (ev) => {
           const idx = Number(ev.target.getAttribute("data-text"));
-          state.slides[idx].text = String(ev.target.value || "").slice(0, 240);
+          state.slides[idx].text = String(ev.target.value || "").slice(0, MAX_SLIDE_TEXT_CHARS);
           refreshRenderedSlide(idx);
         });
       });
@@ -1618,7 +1620,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       }
       const nextSlide = state.slides[slideIndex + 1];
       const timeToEnd = Math.max(0, slide.end - time);
-      const crossfadeWindow = Math.min(RENDER_TRANSITION_SECONDS, Math.max(0.2, (slide.end - slide.start) * 0.22));
+      const crossfadeWindow = Math.min(RENDER_TRANSITION_SECONDS, Math.max(0.2, (slide.end - slide.start) * RENDER_TRANSITION_RATIO));
       const fadeOut = nextSlide ? clamp(1 - (timeToEnd / crossfadeWindow), 0, 1, 0) : 0;
       const fadeIn = smoothstep(fadeOut);
       const baseAlpha = 1 - fadeIn;
@@ -1849,7 +1851,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       const titleFont = clamp(Math.round(width * 0.044), 30, 60, 46);
       const bodyFont = clamp(Math.round(width * 0.021), 19, 33, 27);
       const bodyLineHeight = Math.round(bodyFont * 1.24);
-      const maxBodyLines = 6;
+      const maxBodyLines = MAX_RENDER_TEXT_LINES;
       const boxPaddingX = 16;
       const boxPaddingTop = 14;
       const boxPaddingBottom = 14;
