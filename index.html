@@ -205,7 +205,7 @@
     const TRANSCRIBE_ENDPOINT = "https://api.mistral.ai/v1/audio/transcriptions";
     const CHAT_ENDPOINT = "https://api.mistral.ai/v1/chat/completions";
     const DEFAULT_MUSIC_VOLUME = 0.25;
-    const MAX_TRANSCRIPT_CHARS = 10000;
+    const MAX_TRANSCRIPT_CHARS_FOR_PROMPT = 10000;
     const MIN_SLIDE_DURATION = 1.6;
     const MIN_SLIDE_GAP = 1.2;
     const AUDIO_SYNC_THRESHOLD = 0.45;
@@ -255,7 +255,7 @@
       el.applyCodeBtn.addEventListener("click", () => {
         const code = el.codeInput.value.trim().toLowerCase();
         if (code === "enya26") return applyBudget(5, "Code Enya26 aktiv. Budget = 5€.");
-        if (code === "enya30") return applyBudget(20, "Code enya30 aktiv. Budget = 20€.");
+        if (code === "enya30") return applyBudget(20, "Code Enya30 aktiv. Budget = 20€.");
         applyBudget(0, "Ungültiger Code.", true);
       });
 
@@ -351,13 +351,13 @@
     }
 
     async function buildSlidesWithMinistral(transcript, segments, duration, apiKey) {
-      const shortTranscript = transcript.slice(0, MAX_TRANSCRIPT_CHARS);
+      const shortTranscript = transcript.slice(0, MAX_TRANSCRIPT_CHARS_FOR_PROMPT);
       const payload = {
         model: MINISTRAL_MODEL,
         messages: [
           {
             role: "system",
-            content: "You design video slides. Return strict JSON only."
+            content: "You design video slides. Return JSON only, without markdown."
           },
           {
             role: "user",
@@ -411,18 +411,20 @@ ${JSON.stringify(segments.slice(0, 25))}`
       let slides = Array.isArray(aiSlides) ? aiSlides.filter(Boolean) : [];
       if (!slides.length) slides = fallbackSlides(segments, duration);
 
+      const averageSlideDuration = duration / Math.max(1, slides.length);
       slides = slides.map((s, i) => {
         const start = Number(s.start);
         const end = Number(s.end);
-        const safeStart = Number.isFinite(start) ? Math.max(0, start) : i * (duration / Math.max(1, slides.length));
-        const safeEnd = Number.isFinite(end) ? Math.min(duration, end) : safeStart + duration / Math.max(1, slides.length);
+        const safeStart = Number.isFinite(start) ? Math.max(0, start) : i * averageSlideDuration;
+        const safeEnd = Number.isFinite(end) ? Math.min(duration, end) : safeStart + averageSlideDuration;
         return {
           start: safeStart,
           end: Math.max(safeStart + MIN_SLIDE_DURATION, safeEnd),
           title: (s.title || `Slide ${i + 1}`).slice(0, 80),
           text: (s.text || "").slice(0, 240),
           visualPrompt: (s.visualPrompt || s.title || "creative visual").slice(0, 200),
-          image: imageFromPrompt(s.visualPrompt || s.title || `slide-${i + 1}`)
+          image: imageFromPrompt(s.visualPrompt || s.title || `slide-${i + 1}`),
+          autoImage: true
         };
       }).sort((a, b) => a.start - b.start);
 
@@ -518,6 +520,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
           const file = ev.target.files?.[0];
           if (!file) return;
           state.slides[idx].image = await fileToDataURL(file);
+          state.slides[idx].autoImage = false;
           refreshRenderedSlide(idx);
           createSlidesEditor();
         });
@@ -526,6 +529,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
         btn.addEventListener("click", () => {
           const idx = Number(btn.getAttribute("data-random"));
           state.slides[idx].image = imageFromPrompt(`${state.slides[idx].visualPrompt}-${Date.now()}`);
+          state.slides[idx].autoImage = true;
           refreshRenderedSlide(idx);
           createSlidesEditor();
         });
@@ -557,8 +561,9 @@ ${JSON.stringify(segments.slice(0, 25))}`
         let customIndex = 0;
         state.slides.forEach((slide, i) => {
           const nextCustom = state.customImages[customIndex];
-          if (slide.image.includes("picsum.photos") && nextCustom) {
+          if (slide.autoImage && nextCustom) {
             slide.image = nextCustom;
+            slide.autoImage = false;
             customIndex += 1;
             refreshRenderedSlide(i);
           }
@@ -592,7 +597,12 @@ ${JSON.stringify(segments.slice(0, 25))}`
     }
 
     function findSlideIndexAtTime(t) {
-      return state.slides.findIndex((s, i) => t >= s.start && (i === state.slides.length - 1 ? t <= s.end : t < s.end));
+      return state.slides.findIndex((s, i) => isTimeInSlide(t, s, i === state.slides.length - 1));
+    }
+
+    function isTimeInSlide(time, slide, isLastSlide) {
+      if (time < slide.start) return false;
+      return isLastSlide ? time <= slide.end : time < slide.end;
     }
 
     function activateSlide(index) {
