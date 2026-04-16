@@ -94,6 +94,14 @@
       padding: clamp(12px, 3vw, 30px);
       filter: saturate(.85) brightness(.88);
     }
+    .slide video.bg-video {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      object-fit: cover;
+      opacity: 0;
+      transition: opacity .45s ease;
+    }
+    .slide.video-bg video.bg-video { opacity: 1; }
     .slide.active { opacity: 1; transform: scale(1); filter: saturate(1.02) brightness(1); }
     .slide.fx-fade { transform: scale(1.03); }
     .slide.fx-zoom-in { transform: scale(1.14); }
@@ -120,12 +128,38 @@
       border: 1px solid rgba(148, 163, 184, .22);
       backdrop-filter: blur(1px);
     }
+    .txt h3[contenteditable="true"], .txt p[contenteditable="true"] {
+      cursor: text;
+      outline: none;
+      border-radius: 8px;
+      transition: box-shadow .2s ease, background .2s ease;
+    }
+    .txt h3[contenteditable="true"]:focus, .txt p[contenteditable="true"]:focus {
+      box-shadow: 0 0 0 2px rgba(34, 211, 238, .35);
+      background: rgba(15, 23, 42, .5);
+    }
     @keyframes rise {
       from { transform: translateY(22px); opacity: 0; }
       to { transform: translateY(0); opacity: 1; }
     }
     .txt h3 { margin: 0 0 8px; font-size: clamp(1rem, 2.5vw, 2rem); }
     .txt p { margin: 0; color: #dbeafe; font-size: clamp(.86rem, 1.4vw, 1.05rem); }
+    .txt.motion-float .txt-title { animation: titleFloat 3.2s ease-in-out infinite; }
+    .txt.motion-pulse .txt-body { animation: bodyPulse 2.8s ease-in-out infinite; }
+    .txt.motion-slide .txt-title,
+    .txt.motion-slide .txt-body { animation: bodySlide .9s ease both; }
+    @keyframes titleFloat {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
+    }
+    @keyframes bodyPulse {
+      0%, 100% { opacity: .88; }
+      50% { opacity: 1; }
+    }
+    @keyframes bodySlide {
+      from { transform: translateX(12px); opacity: .3; }
+      to { transform: translateX(0); opacity: 1; }
+    }
     .slide.fx-pop.active .txt { animation: popIn .5s ease both; }
     @keyframes popIn {
       from { transform: translateY(16px) scale(.95); opacity: 0; }
@@ -154,6 +188,11 @@
     .slide-item img {
       width: 92px; height: 64px; object-fit: cover; border-radius: 8px;
       border: 1px solid #334155;
+    }
+    .slide-item video {
+      width: 92px; height: 64px; object-fit: cover; border-radius: 8px;
+      border: 1px solid #334155;
+      background: #020617;
     }
     .graphics-editor {
       display: grid;
@@ -240,6 +279,8 @@
     .muted { color: var(--muted); font-size: .86rem; }
     .warn { color: var(--warn); }
     .ok { color: var(--ok); }
+    #renderStatus { min-height: 20px; }
+    #renderDownload { text-decoration: none; text-align: center; }
   </style>
 </head>
 <body>
@@ -296,6 +337,15 @@
         <button id="nextSlideBtn" type="button" class="ghost">Weiter ▶</button>
         <div id="activeSlideMeta" class="muted">Slide 0 / 0</div>
       </div>
+      <div class="row compact">
+        <select id="renderQuality">
+          <option value="draft">Render Qualität: Draft (720p)</option>
+          <option value="high">Render Qualität: High (1080p)</option>
+        </select>
+        <button id="renderBtn" type="button">Rendern</button>
+        <a id="renderDownload" class="ghost" style="display:none" download="loom-export.webm">Download Render</a>
+      </div>
+      <div id="renderStatus" class="muted">Direkt auf der Folie editieren: Titel/Text anklicken.</div>
       <div id="timelineMeta" class="muted">Noch keine Slides.</div>
     </section>
 
@@ -311,9 +361,9 @@
           <p class="muted">Die Musikspur wird intelligent unter der Sprachspur abgespielt.</p>
         </div>
         <div class="grid">
-          <label for="imagesInput">Eigene Bilder hochladen</label>
-          <input id="imagesInput" type="file" accept="image/*" multiple />
-          <p class="muted">Du kannst fertige Bilder pro Slide ersetzen.</p>
+          <label for="imagesInput">Eigene Medien hochladen (Bild/Video)</label>
+          <input id="imagesInput" type="file" accept="image/*,video/*" multiple />
+          <p class="muted">Du kannst Bilder oder Videos auf Slides legen.</p>
         </div>
       </div>
       <div id="slidesEditor" class="slides-list"></div>
@@ -333,6 +383,11 @@
     const STORAGE_KEY_BUDGET = "videomaker.budget";
     const SLIDE_EFFECTS = ["fade", "zoom-in", "zoom-out", "pan-left", "pan-right", "pop"];
     const GRAPHIC_TYPES = ["badge", "circle", "timeline"];
+    const TEXT_MOTIONS = ["rise", "float", "pulse", "slide"];
+    const RENDER_PRESETS = {
+      draft: { width: 1280, height: 720, bitrate: 3500000, label: "Draft 720p" },
+      high: { width: 1920, height: 1080, bitrate: 7000000, label: "High 1080p" }
+    };
 
     const el = {
       apiKey: document.getElementById("apiKey"),
@@ -355,7 +410,11 @@
       slidesEditor: document.getElementById("slidesEditor"),
       prevSlideBtn: document.getElementById("prevSlideBtn"),
       nextSlideBtn: document.getElementById("nextSlideBtn"),
-      activeSlideMeta: document.getElementById("activeSlideMeta")
+      activeSlideMeta: document.getElementById("activeSlideMeta"),
+      renderQuality: document.getElementById("renderQuality"),
+      renderBtn: document.getElementById("renderBtn"),
+      renderStatus: document.getElementById("renderStatus"),
+      renderDownload: document.getElementById("renderDownload")
     };
 
     const state = {
@@ -366,7 +425,8 @@
       voiceAudio: new Audio(),
       musicAudio: new Audio(),
       duration: 0,
-      activeSlide: -1
+      activeSlide: -1,
+      renderBusy: false
     };
 
     init();
@@ -391,7 +451,8 @@
       });
       el.seekBar.addEventListener("input", onSeek);
       el.musicInput.addEventListener("change", onMusicUpload);
-      el.imagesInput.addEventListener("change", onImagesUpload);
+      el.imagesInput.addEventListener("change", onMediaUpload);
+      el.renderBtn.addEventListener("click", renderProjectVideo);
       state.voiceAudio.addEventListener("timeupdate", onTimeUpdate);
       state.voiceAudio.addEventListener("ended", () => {
         el.playPauseBtn.textContent = "Wiedergabe";
@@ -498,11 +559,12 @@ Gib NUR JSON zurück:
        "end":8,
        "title":"...",
        "text":"...",
-       "visualPrompt":"...",
-       "effect":"fade|zoom-in|zoom-out|pan-left|pan-right|pop",
-       "layout":{"x":10,"y":66,"width":64,"align":"left"},
-       "graphics":[{"type":"badge|circle|timeline","label":"optional","x":70,"y":24,"size":56,"color":"#22d3ee"}]
-      }
+        "visualPrompt":"...",
+        "effect":"fade|zoom-in|zoom-out|pan-left|pan-right|pop",
+        "textMotion":"rise|float|pulse|slide",
+        "layout":{"x":10,"y":66,"width":64,"align":"left"},
+        "graphics":[{"type":"badge|circle|timeline","label":"optional","x":70,"y":24,"size":56,"color":"#22d3ee"}]
+       }
   ]
 }
 Regeln:
@@ -511,6 +573,7 @@ Regeln:
 - Text kurz, modern, animaker-style
 - VisualPrompt beschreibt passendes Bildmotiv
 - Effekt nur aus: fade, zoom-in, zoom-out, pan-left, pan-right, pop
+- TextMotion nur aus: rise, float, pulse, slide
 - Layout-Werte Prozent (x/y/width), damit Text frei positionierbar ist
 - Optional Graphics für visuelle Elemente, z.B. Timeline
 Auszug Transkript:
@@ -556,8 +619,11 @@ ${JSON.stringify(segments.slice(0, 25))}`
           text: (s.text || "").slice(0, 240),
           visualPrompt: (s.visualPrompt || s.title || "creative visual").slice(0, 200),
           image: imageFromPrompt(s.visualPrompt || s.title || `slide-${i + 1}`),
+          media: imageFromPrompt(s.visualPrompt || s.title || `slide-${i + 1}`),
+          mediaType: "image",
           effect: normalizeEffect(s.effect),
           layout: normalizeLayout(s.layout, i),
+          textMotion: normalizeTextMotion(s.textMotion),
           graphics: normalizeGraphics(s.graphics, s.title, s.text, i),
           autoImage: true
         };
@@ -586,8 +652,12 @@ ${JSON.stringify(segments.slice(0, 25))}`
           title: `Kapitel ${i + 1}`,
           text: (seg.text || "").slice(0, 180),
           visualPrompt: seg.text || `Moodboard scene ${i + 1}`,
+          image: imageFromPrompt(seg.text || `Moodboard scene ${i + 1}`),
+          media: imageFromPrompt(seg.text || `Moodboard scene ${i + 1}`),
+          mediaType: "image",
           effect: SLIDE_EFFECTS[i % SLIDE_EFFECTS.length],
           layout: normalizeLayout(null, i),
+          textMotion: TEXT_MOTIONS[i % TEXT_MOTIONS.length],
           graphics: normalizeGraphics(null, `Kapitel ${i + 1}`, seg.text || "", i)
         };
       });
@@ -617,16 +687,27 @@ ${JSON.stringify(segments.slice(0, 25))}`
         const node = document.createElement("article");
         node.className = `slide fx-${normalizeEffect(slide.effect)}`;
         node.dataset.index = String(idx);
-        node.style.backgroundImage = `url("${slide.image}")`;
         node.innerHTML =
-          `<div class="overlay"></div>
+          `<video class="bg-video" muted playsinline loop preload="metadata"></video>
+           <div class="overlay"></div>
            <div class="gfx-layer"></div>
            <div class="txt">
-             <h3>${escapeHtml(slide.title)}</h3>
-            <p>${escapeHtml(slide.text)}</p>
+             <h3 class="txt-title" contenteditable="true" spellcheck="false">${escapeHtml(slide.title)}</h3>
+             <p class="txt-body" contenteditable="true" spellcheck="false">${escapeHtml(slide.text)}</p>
            </div>`;
+        applySlideMedia(node, slide);
         renderSlideGraphics(node, slide);
-        applyTextLayout(node, slide.layout);
+        applyTextPresentation(node, slide);
+        const titleNode = node.querySelector(".txt-title");
+        const textNode = node.querySelector(".txt-body");
+        titleNode?.addEventListener("input", () => {
+          state.slides[idx].title = String(titleNode.textContent || "").slice(0, 80);
+          syncEditorSlideFields(idx);
+        });
+        textNode?.addEventListener("input", () => {
+          state.slides[idx].text = String(textNode.textContent || "").slice(0, 240);
+          syncEditorSlideFields(idx);
+        });
         el.videoStage.appendChild(node);
 
         const seg = document.createElement("span");
@@ -646,7 +727,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
         const item = document.createElement("div");
         item.className = "slide-item";
         item.innerHTML = `
-          <img src="${slide.image}" alt="slide-${idx + 1}" />
+          ${renderMediaThumb(slide, idx)}
           <div class="grid">
             <span class="muted">${formatTime(slide.start)} - ${formatTime(slide.end)}</span>
             <input type="text" data-title="${idx}" maxlength="80" placeholder="Titel" />
@@ -655,7 +736,10 @@ ${JSON.stringify(segments.slice(0, 25))}`
               <select data-effect="${idx}">
                 ${SLIDE_EFFECTS.map((effect) => `<option value="${effect}">${effect}</option>`).join("")}
               </select>
-              <input type="file" accept="image/*" data-replace="${idx}" />
+              <select data-motion="${idx}">
+                ${TEXT_MOTIONS.map((motion) => `<option value="${motion}">${motion}</option>`).join("")}
+              </select>
+              <input type="file" accept="image/*,video/*" data-replace-media="${idx}" />
               <button type="button" class="ghost" data-random="${idx}">Premade tauschen</button>
             </div>
             <div class="row">
@@ -675,10 +759,12 @@ ${JSON.stringify(segments.slice(0, 25))}`
         const titleInput = item.querySelector(`input[data-title="${idx}"]`);
         const textInput = item.querySelector(`textarea[data-text="${idx}"]`);
         const effectInput = item.querySelector(`select[data-effect="${idx}"]`);
+        const motionInput = item.querySelector(`select[data-motion="${idx}"]`);
         const layoutAlignInput = item.querySelector(`select[data-layout-align="${idx}"]`);
         if (titleInput) titleInput.value = slide.title;
         if (textInput) textInput.value = slide.text;
         if (effectInput) effectInput.value = normalizeEffect(slide.effect);
+        if (motionInput) motionInput.value = normalizeTextMotion(slide.textMotion);
         if (layoutAlignInput) layoutAlignInput.value = slide.layout.align;
         renderSlideGraphicsEditor(item, idx);
         el.slidesEditor.appendChild(item);
@@ -701,6 +787,13 @@ ${JSON.stringify(segments.slice(0, 25))}`
         select.addEventListener("change", (ev) => {
           const idx = Number(ev.target.getAttribute("data-effect"));
           state.slides[idx].effect = normalizeEffect(ev.target.value);
+          refreshRenderedSlide(idx);
+        });
+      });
+      el.slidesEditor.querySelectorAll("select[data-motion]").forEach((select) => {
+        select.addEventListener("change", (ev) => {
+          const idx = Number(ev.target.getAttribute("data-motion"));
+          state.slides[idx].textMotion = normalizeTextMotion(ev.target.value);
           refreshRenderedSlide(idx);
         });
       });
@@ -747,12 +840,15 @@ ${JSON.stringify(segments.slice(0, 25))}`
           refreshRenderedSlide(idx);
         });
       });
-      el.slidesEditor.querySelectorAll("input[data-replace]").forEach((input) => {
+      el.slidesEditor.querySelectorAll("input[data-replace-media]").forEach((input) => {
         input.addEventListener("change", async (ev) => {
-          const idx = Number(ev.target.getAttribute("data-replace"));
+          const idx = Number(ev.target.getAttribute("data-replace-media"));
           const file = ev.target.files?.[0];
           if (!file) return;
-          state.slides[idx].image = await fileToDataURL(file);
+          const media = await fileToMediaSource(file);
+          state.slides[idx].media = media.src;
+          state.slides[idx].mediaType = media.type;
+          state.slides[idx].image = media.type === "image" ? media.src : state.slides[idx].image;
           state.slides[idx].autoImage = false;
           refreshRenderedSlide(idx);
           createSlidesEditor();
@@ -761,7 +857,10 @@ ${JSON.stringify(segments.slice(0, 25))}`
       el.slidesEditor.querySelectorAll("button[data-random]").forEach((btn) => {
         btn.addEventListener("click", () => {
           const idx = Number(btn.getAttribute("data-random"));
-          state.slides[idx].image = imageFromPrompt(`${state.slides[idx].visualPrompt}-${Date.now()}`);
+          const randomImage = imageFromPrompt(`${state.slides[idx].visualPrompt}-${Date.now()}`);
+          state.slides[idx].image = randomImage;
+          state.slides[idx].media = randomImage;
+          state.slides[idx].mediaType = "image";
           state.slides[idx].autoImage = true;
           refreshRenderedSlide(idx);
           createSlidesEditor();
@@ -774,12 +873,12 @@ ${JSON.stringify(segments.slice(0, 25))}`
       if (!node) return;
       const slide = state.slides[index];
       node.className = `slide fx-${normalizeEffect(slide.effect)}${state.activeSlide === index ? " active" : ""}`;
-      node.style.backgroundImage = `url("${slide.image}")`;
+      applySlideMedia(node, slide, state.activeSlide === index);
       const title = node.querySelector("h3");
       const text = node.querySelector("p");
       if (title) title.textContent = slide.title;
       if (text) text.textContent = slide.text;
-      applyTextLayout(node, slide.layout);
+      applyTextPresentation(node, slide);
       renderSlideGraphics(node, slide);
     }
 
@@ -792,18 +891,20 @@ ${JSON.stringify(segments.slice(0, 25))}`
       setStatus("Musikspur geladen.");
     }
 
-    async function onImagesUpload() {
+    async function onMediaUpload() {
       const files = Array.from(el.imagesInput.files || []);
       if (!files.length) return;
-      const urls = await Promise.all(files.map(fileToDataURL));
-      state.customImages.push(...urls);
-      setStatus(`${files.length} eigene Bilder hinzugefügt.`);
+      const mediaItems = await Promise.all(files.map(fileToMediaSource));
+      state.customImages.push(...mediaItems);
+      setStatus(`${files.length} eigene Medien hinzugefügt.`);
       if (state.customImages.length && state.slides.length) {
         let customIndex = 0;
         state.slides.forEach((slide, i) => {
           const nextCustom = state.customImages[customIndex];
           if (slide.autoImage && nextCustom) {
-            slide.image = nextCustom;
+            slide.media = nextCustom.src;
+            slide.mediaType = nextCustom.type;
+            if (nextCustom.type === "image") slide.image = nextCustom.src;
             slide.autoImage = false;
             customIndex += 1;
             refreshRenderedSlide(i);
@@ -820,6 +921,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       state.voiceAudio.currentTime = t;
       if (state.musicAudio.src) state.musicAudio.currentTime = t;
       activateSlideByTime(t);
+      syncActiveSlideVideoByTime(t);
     }
 
     function onTimeUpdate() {
@@ -830,6 +932,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       if (state.musicAudio.src && !state.musicAudio.paused && Math.abs(state.musicAudio.currentTime - t) > AUDIO_SYNC_THRESHOLD) {
         state.musicAudio.currentTime = t;
       }
+      syncActiveSlideVideoByTime(t);
     }
 
     function activateSlideByTime(t) {
@@ -851,6 +954,12 @@ ${JSON.stringify(segments.slice(0, 25))}`
       state.activeSlide = index;
       el.videoStage.querySelectorAll(".slide").forEach((node, idx) => {
         node.classList.toggle("active", idx === index);
+        const slide = state.slides[idx];
+        const video = node.querySelector(".bg-video");
+        if (video && slide?.mediaType === "video") {
+          if (idx === index) video.play().catch(() => {});
+          else video.pause();
+        }
       });
       el.timeline.querySelectorAll("span").forEach((node, idx) => {
         node.classList.toggle("on", idx === index);
@@ -865,6 +974,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       state.voiceAudio.currentTime = t;
       if (state.musicAudio.src) state.musicAudio.currentTime = t;
       activateSlide(target);
+      syncActiveSlideVideoByTime(t);
       const dur = Math.max(1, state.duration);
       el.seekBar.value = String(Math.floor((t / dur) * 1000));
     }
@@ -879,10 +989,15 @@ ${JSON.stringify(segments.slice(0, 25))}`
             setStatus("Musik konnte nicht automatisch gestartet werden.", true);
           });
         }
+        syncActiveSlideVideoByTime(state.voiceAudio.currentTime || 0);
+        const activeNode = el.videoStage.querySelector(`.slide[data-index="${state.activeSlide}"] .bg-video`);
+        if (activeNode) activeNode.play().catch(() => {});
         el.playPauseBtn.textContent = "Pause";
       } else {
         state.voiceAudio.pause();
         if (state.musicAudio.src) state.musicAudio.pause();
+        const activeNode = el.videoStage.querySelector(`.slide[data-index="${state.activeSlide}"] .bg-video`);
+        if (activeNode) activeNode.pause();
         el.playPauseBtn.textContent = "Wiedergabe";
       }
     }
@@ -948,6 +1063,90 @@ ${JSON.stringify(segments.slice(0, 25))}`
       });
     }
 
+    async function fileToMediaSource(file) {
+      const type = String(file.type || "");
+      if (type.startsWith("video/")) {
+        return { type: "video", src: URL.createObjectURL(file) };
+      }
+      if (type.startsWith("image/")) {
+        return { type: "image", src: URL.createObjectURL(file) };
+      }
+      throw new Error("Nur Bild- oder Video-Dateien erlaubt.");
+    }
+
+    function renderMediaThumb(slide, idx) {
+      const src = escapeAttr(slide.media || slide.image || "");
+      if (slide.mediaType === "video") {
+        return `<video src="${src}" muted playsinline preload="metadata"></video>`;
+      }
+      return `<img src="${src}" alt="slide-${idx + 1}" />`;
+    }
+
+    function applySlideMedia(node, slide, isActive = false) {
+      const mediaType = slide.mediaType === "video" ? "video" : "image";
+      const src = slide.media || slide.image || "";
+      const bgVideo = node.querySelector(".bg-video");
+      if (!bgVideo) return;
+      if (mediaType === "video" && src) {
+        node.classList.add("video-bg");
+        node.style.backgroundImage = "none";
+        if (bgVideo.src !== src) bgVideo.src = src;
+        bgVideo.currentTime = 0;
+        if (isActive) bgVideo.play().catch(() => {});
+      } else {
+        node.classList.remove("video-bg");
+        if (bgVideo.src) {
+          bgVideo.pause();
+          bgVideo.removeAttribute("src");
+          bgVideo.load();
+        }
+        node.style.backgroundImage = src ? `url("${src}")` : "none";
+      }
+    }
+
+    function syncActiveSlideVideoByTime(time) {
+      const idx = state.activeSlide;
+      if (idx < 0 || !state.slides[idx]) return;
+      const slide = state.slides[idx];
+      if (slide.mediaType !== "video") return;
+      const node = el.videoStage.querySelector(`.slide[data-index="${idx}"]`);
+      const bgVideo = node?.querySelector(".bg-video");
+      if (!bgVideo || !Number.isFinite(bgVideo.duration) || bgVideo.duration <= 0) return;
+      const localTime = Math.max(0, time - slide.start);
+      const target = localTime % bgVideo.duration;
+      if (Math.abs(bgVideo.currentTime - target) > 0.25) bgVideo.currentTime = target;
+    }
+
+    function syncEditorSlideFields(slideIndex) {
+      const slide = state.slides[slideIndex];
+      if (!slide) return;
+      const titleInput = el.slidesEditor.querySelector(`input[data-title="${slideIndex}"]`);
+      const textInput = el.slidesEditor.querySelector(`textarea[data-text="${slideIndex}"]`);
+      if (titleInput && titleInput !== document.activeElement) titleInput.value = slide.title;
+      if (textInput && textInput !== document.activeElement) textInput.value = slide.text;
+      const timelineSeg = el.timeline.querySelectorAll("span")[slideIndex];
+      if (timelineSeg) timelineSeg.title = `${slideIndex + 1}: ${slide.title}`;
+    }
+
+    function applyTextPresentation(node, slide) {
+      applyTextLayout(node, slide.layout);
+      const txt = node.querySelector(".txt");
+      if (!txt) return;
+      const motion = normalizeTextMotion(slide.textMotion);
+      txt.classList.remove("motion-rise", "motion-float", "motion-pulse", "motion-slide");
+      txt.classList.add(`motion-${motion}`);
+    }
+
+    function normalizeTextMotion(motion) {
+      return TEXT_MOTIONS.includes(motion) ? motion : "rise";
+    }
+
+    function escapeAttr(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll('"', "&quot;");
+    }
+
     async function safeError(res) {
       try {
         const text = await res.text();
@@ -955,6 +1154,361 @@ ${JSON.stringify(segments.slice(0, 25))}`
       } catch {
         return "Unbekannter Fehler";
       }
+    }
+
+    async function renderProjectVideo() {
+      if (state.renderBusy) return;
+      if (!state.slides.length || !state.voiceAudio.src || !state.duration) {
+        el.renderStatus.textContent = "Bitte zuerst ein Projekt mit Voice erstellen.";
+        return;
+      }
+      if (typeof MediaRecorder === "undefined") {
+        el.renderStatus.textContent = "Rendern wird im aktuellen Browser nicht unterstützt.";
+        return;
+      }
+      const quality = el.renderQuality.value;
+      const preset = RENDER_PRESETS[quality] || RENDER_PRESETS.draft;
+      state.renderBusy = true;
+      el.renderBtn.disabled = true;
+      el.renderDownload.style.display = "none";
+      el.renderStatus.textContent = `Render startet (${preset.label})...`;
+      try {
+        state.voiceAudio.pause();
+        state.musicAudio.pause();
+        el.playPauseBtn.textContent = "Wiedergabe";
+        const mediaCache = await preloadRenderMedia(state.slides);
+        const blob = await recordRenderOutput(preset, mediaCache);
+        const url = URL.createObjectURL(blob);
+        el.renderDownload.href = url;
+        el.renderDownload.download = `loom-export-${quality}.webm`;
+        el.renderDownload.style.display = "inline-flex";
+        el.renderStatus.textContent = `Render fertig (${preset.label}). Jetzt herunterladen.`;
+      } catch (error) {
+        console.error(error);
+        el.renderStatus.textContent = `Render fehlgeschlagen: ${error.message}`;
+      } finally {
+        state.renderBusy = false;
+        el.renderBtn.disabled = false;
+      }
+    }
+
+    async function preloadRenderMedia(slides) {
+      const cache = new Map();
+      const jobs = slides.map(async (slide) => {
+        const type = slide.mediaType === "video" ? "video" : "image";
+        const src = slide.media || slide.image;
+        if (!src) return;
+        const key = `${type}|${src}`;
+        if (cache.has(key)) return;
+        if (type === "video") {
+          const video = document.createElement("video");
+          video.src = src;
+          video.muted = true;
+          video.playsInline = true;
+          video.preload = "auto";
+          await waitForMedia(video, "loadedmetadata");
+          cache.set(key, video);
+          return;
+        }
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = src;
+        await waitForMedia(img, "load");
+        cache.set(key, img);
+      });
+      await Promise.allSettled(jobs);
+      return cache;
+    }
+
+    function waitForMedia(node, eventName) {
+      return new Promise((resolve, reject) => {
+        if (eventName === "load" && "complete" in node && node.complete) return resolve();
+        if (eventName === "loadedmetadata" && "readyState" in node && node.readyState >= 1) return resolve();
+        const done = () => {
+          node.removeEventListener(eventName, done);
+          node.removeEventListener("error", fail);
+          resolve();
+        };
+        const fail = () => {
+          node.removeEventListener(eventName, done);
+          node.removeEventListener("error", fail);
+          reject(new Error("Media konnte nicht geladen werden."));
+        };
+        node.addEventListener(eventName, done, { once: true });
+        node.addEventListener("error", fail, { once: true });
+      });
+    }
+
+    async function recordRenderOutput(preset, mediaCache) {
+      const canvas = document.createElement("canvas");
+      canvas.width = preset.width;
+      canvas.height = preset.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("Canvas Context nicht verfügbar.");
+
+      const stream = canvas.captureStream(30);
+      const audioContext = new AudioContext();
+      const destination = audioContext.createMediaStreamDestination();
+
+      const voice = new Audio(state.voiceAudio.src);
+      voice.crossOrigin = "anonymous";
+      voice.preload = "auto";
+      voice.currentTime = 0;
+      const voiceNode = audioContext.createMediaElementSource(voice);
+      voiceNode.connect(destination);
+
+      let music = null;
+      let musicNode = null;
+      if (state.musicAudio.src) {
+        music = new Audio(state.musicAudio.src);
+        music.crossOrigin = "anonymous";
+        music.loop = true;
+        music.preload = "auto";
+        music.volume = state.musicAudio.volume || DEFAULT_MUSIC_VOLUME;
+        musicNode = audioContext.createMediaElementSource(music);
+        musicNode.connect(destination);
+      }
+
+      const combined = new MediaStream([
+        ...stream.getVideoTracks(),
+        ...destination.stream.getAudioTracks()
+      ]);
+      const mimeType = pickRenderMimeType();
+      const recorder = new MediaRecorder(combined, {
+        mimeType: mimeType || undefined,
+        videoBitsPerSecond: preset.bitrate
+      });
+      const chunks = [];
+      recorder.addEventListener("dataavailable", (ev) => {
+        if (ev.data?.size) chunks.push(ev.data);
+      });
+      const stopPromise = new Promise((resolve) => {
+        recorder.addEventListener("stop", () => resolve(new Blob(chunks, { type: mimeType || "video/webm" })), { once: true });
+      });
+
+      await audioContext.resume();
+      recorder.start(200);
+      await voice.play();
+      if (music) await music.play().catch(() => {});
+      const startedAt = performance.now();
+
+      await new Promise((resolve) => {
+        const tick = () => {
+          const elapsed = (performance.now() - startedAt) / 1000;
+          const t = Math.min(state.duration, Math.max(voice.currentTime || elapsed, elapsed));
+          drawRenderFrame(ctx, canvas, t, mediaCache);
+          if (t >= state.duration - 0.03) {
+            voice.pause();
+            if (music) music.pause();
+            recorder.stop();
+            resolve();
+            return;
+          }
+          requestAnimationFrame(tick);
+        };
+        tick();
+      });
+
+      const blob = await stopPromise;
+      stream.getTracks().forEach((track) => track.stop());
+      destination.stream.getTracks().forEach((track) => track.stop());
+      voiceNode.disconnect();
+      if (musicNode) musicNode.disconnect();
+      await audioContext.close();
+      return blob;
+    }
+
+    function pickRenderMimeType() {
+      const list = [
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm"
+      ];
+      return list.find((item) => MediaRecorder.isTypeSupported(item)) || "";
+    }
+
+    function drawRenderFrame(ctx, canvas, time, mediaCache) {
+      const width = canvas.width;
+      const height = canvas.height;
+      ctx.clearRect(0, 0, width, height);
+      const slideIndex = Math.max(0, findSlideIndexAtTime(time));
+      const slide = state.slides[slideIndex];
+      if (!slide) {
+        ctx.fillStyle = "#020617";
+        ctx.fillRect(0, 0, width, height);
+        return;
+      }
+      const progress = clamp((time - slide.start) / Math.max(0.01, slide.end - slide.start), 0, 1, 0);
+      drawRenderBackground(ctx, width, height, slide, progress, time, mediaCache);
+      drawRenderOverlay(ctx, width, height);
+      drawRenderGraphics(ctx, width, height, slide, time);
+      drawRenderText(ctx, width, height, slide, progress, time);
+    }
+
+    function drawRenderBackground(ctx, width, height, slide, progress, time, mediaCache) {
+      const tx = getEffectTransform(slide.effect, progress, width);
+      ctx.save();
+      ctx.translate(width / 2 + tx.x, height / 2 + tx.y);
+      ctx.scale(tx.scale, tx.scale);
+      ctx.translate(-width / 2, -height / 2);
+      const key = `${slide.mediaType === "video" ? "video" : "image"}|${slide.media || slide.image}`;
+      const media = mediaCache.get(key);
+      let drawn = false;
+      try {
+        if (slide.mediaType === "video" && media instanceof HTMLVideoElement && media.readyState >= 2) {
+          const local = Math.max(0, time - slide.start);
+          if (Number.isFinite(media.duration) && media.duration > 0) {
+            const target = local % media.duration;
+            if (Math.abs(media.currentTime - target) > 0.2) media.currentTime = target;
+          }
+          ctx.drawImage(media, 0, 0, width, height);
+          drawn = true;
+        } else if (media instanceof HTMLImageElement) {
+          ctx.drawImage(media, 0, 0, width, height);
+          drawn = true;
+        }
+      } catch {}
+      if (!drawn) {
+        const g = ctx.createLinearGradient(0, 0, width, height);
+        g.addColorStop(0, "#1e293b");
+        g.addColorStop(1, "#0f172a");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, width, height);
+      }
+      ctx.restore();
+    }
+
+    function getEffectTransform(effect, progress, width) {
+      const p = clamp(progress, 0, 1, 0);
+      if (effect === "zoom-in") return { scale: 1.13 - 0.13 * p, x: 0, y: 0 };
+      if (effect === "zoom-out") return { scale: 1 + 0.09 * p, x: 0, y: 0 };
+      if (effect === "pan-left") return { scale: 1.06, x: (0.06 - 0.12 * p) * width, y: 0 };
+      if (effect === "pan-right") return { scale: 1.06, x: (-0.06 + 0.12 * p) * width, y: 0 };
+      if (effect === "pop") return { scale: 1 + Math.sin(p * Math.PI) * 0.05, x: 0, y: 0 };
+      return { scale: 1.02, x: 0, y: 0 };
+    }
+
+    function drawRenderOverlay(ctx, width, height) {
+      const grd = ctx.createLinearGradient(0, 0, 0, height);
+      grd.addColorStop(0, "rgba(2, 6, 23, 0.05)");
+      grd.addColorStop(1, "rgba(2, 6, 23, 0.65)");
+      ctx.fillStyle = grd;
+      ctx.fillRect(0, 0, width, height);
+    }
+
+    function drawRenderGraphics(ctx, width, height, slide, time) {
+      (slide.graphics || []).forEach((graphic, idx) => {
+        const type = normalizeGraphicType(graphic.type);
+        const x = (clamp(Number(graphic.x), 0, 95, 50) / 100) * width;
+        const y = (clamp(Number(graphic.y), 5, 95, 30) / 100) * height;
+        const color = normalizeColor(graphic.color);
+        const pulse = 1 + Math.sin((time + idx * 0.6) * 2) * 0.02;
+        if (type === "timeline") {
+          const lineW = Math.min(width * 0.82, 760) * pulse;
+          const lineH = 42;
+          const startX = x - lineW / 2;
+          ctx.fillStyle = "rgba(34, 211, 238, 0.24)";
+          ctx.strokeStyle = "rgba(255,255,255,0.45)";
+          ctx.lineWidth = 1.5;
+          roundRect(ctx, startX, y - lineH / 2, lineW, lineH, 22);
+          ctx.fill();
+          ctx.stroke();
+          const ticks = String(graphic.label || "Start|Now|Next").split("|").map((s) => s.trim()).filter(Boolean).slice(0, 6);
+          if (!ticks.length) return;
+          ticks.forEach((tick, i) => {
+            const tx = startX + (i / Math.max(1, ticks.length - 1)) * lineW;
+            ctx.fillStyle = "rgba(255,255,255,0.95)";
+            ctx.beginPath();
+            ctx.arc(tx, y - 10, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.font = "600 18px Inter, system-ui, sans-serif";
+            ctx.textAlign = "center";
+            ctx.fillText(tick.slice(0, 10), tx, y + 13);
+          });
+          return;
+        }
+        if (type === "circle") {
+          const s = clamp(Number(graphic.size), 20, 100, 44) * pulse;
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(x, y, s / 2, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.font = `700 ${Math.max(12, Math.round(s * 0.26))}px Inter, system-ui, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.fillStyle = "white";
+          ctx.fillText(String(graphic.label || "●").slice(0, 6), x, y + 5);
+          return;
+        }
+        const badgeW = Math.max(120, clamp(Number(graphic.size), 20, 100, 44) * 3) * pulse;
+        const badgeH = 34;
+        ctx.fillStyle = color;
+        ctx.strokeStyle = "rgba(255,255,255,.35)";
+        roundRect(ctx, x - badgeW / 2, y - badgeH / 2, badgeW, badgeH, 18);
+        ctx.fill();
+        ctx.stroke();
+        ctx.font = "700 18px Inter, system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillStyle = "white";
+        ctx.fillText(String(graphic.label || "Badge").slice(0, 26), x, y + 6);
+      });
+    }
+
+    function drawRenderText(ctx, width, height, slide, progress, time) {
+      const layout = normalizeLayout(slide.layout);
+      const motion = normalizeTextMotion(slide.textMotion);
+      const boxW = (layout.width / 100) * width;
+      const anchorX = (layout.x / 100) * width;
+      const centerY = (layout.y / 100) * height;
+      let x = anchorX;
+      if (layout.align === "center") x = anchorX - boxW / 2;
+      if (layout.align === "right") x = anchorX - boxW;
+      const bob = motion === "float" ? Math.sin(time * 2.2) * 4 : 0;
+      const alpha = motion === "pulse" ? 0.85 + Math.sin(time * 2.7) * 0.15 : 1;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "rgba(2, 6, 23, 0.38)";
+      roundRect(ctx, x - 12, centerY - 56 + bob, boxW + 24, 122, 14);
+      ctx.fill();
+
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = layout.align === "right" ? "right" : layout.align === "center" ? "center" : "left";
+      const tx = layout.align === "right" ? x + boxW : layout.align === "center" ? x + boxW / 2 : x;
+      const reveal = motion === "slide" ? clamp(progress * 1.5, 0, 1, 1) : 1;
+      ctx.font = "700 56px Inter, system-ui, sans-serif";
+      ctx.fillText(String(slide.title || "").slice(0, 80), tx, centerY - 15 + bob, Math.max(120, boxW * reveal));
+      ctx.font = "500 31px Inter, system-ui, sans-serif";
+      wrapCanvasText(ctx, String(slide.text || "").slice(0, 240), tx, centerY + 24 + bob, boxW, 34);
+      ctx.restore();
+    }
+
+    function roundRect(ctx, x, y, width, height, radius) {
+      const r = Math.min(radius, width / 2, height / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + width, y, x + width, y + height, r);
+      ctx.arcTo(x + width, y + height, x, y + height, r);
+      ctx.arcTo(x, y + height, x, y, r);
+      ctx.arcTo(x, y, x + width, y, r);
+      ctx.closePath();
+    }
+
+    function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
+      const words = String(text || "").split(/\s+/).filter(Boolean);
+      if (!words.length) return;
+      let line = "";
+      let lines = 0;
+      for (const word of words) {
+        const test = line ? `${line} ${word}` : word;
+        if (ctx.measureText(test).width > maxWidth && line) {
+          ctx.fillText(line, x, y + lines * lineHeight);
+          line = word;
+          lines += 1;
+          if (lines >= 4) break;
+        } else {
+          line = test;
+        }
+      }
+      if (lines < 4 && line) ctx.fillText(line, x, y + lines * lineHeight);
     }
 
     function normalizeEffect(effect) {
