@@ -430,6 +430,8 @@
     const MAX_TRANSCRIPT_CHARS_FOR_PROMPT = 10000;
     const MIN_SLIDE_DURATION = 1.6;
     const MIN_SLIDE_GAP = 1.2;
+    const MIN_SLIDES = 7;
+    const MAX_SLIDES = 18;
     const RENDER_TRANSITION_SECONDS = 0.55;
     const RENDER_TRANSITION_RATIO = 0.22;
     const MIN_CROSSFADE_WINDOW = 0.2;
@@ -690,8 +692,8 @@ ${JSON.stringify(segments.slice(0, 25))}`
     function normalizeSlides(aiSlides, segments, duration) {
       let slides = Array.isArray(aiSlides) ? aiSlides.filter(Boolean) : [];
       if (!slides.length) slides = fallbackSlides(segments, duration);
-      if (slides.length > 18) slides = slides.slice(0, 18);
-      if (slides.length < 7) slides = fallbackSlides(segments, duration);
+      if (slides.length > MAX_SLIDES) slides = slides.slice(0, MAX_SLIDES);
+      if (slides.length < MIN_SLIDES) slides = fallbackSlides(segments, duration);
 
       const averageSlideDuration = duration / Math.max(1, slides.length);
       slides = slides.map((s, i) => {
@@ -731,7 +733,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
     }
 
     function fallbackSlides(segments, duration) {
-      const count = Math.min(14, Math.max(7, Math.ceil(duration / 16)));
+      const count = Math.min(14, Math.max(MIN_SLIDES, Math.ceil(duration / 16)));
       const slice = duration / count;
       return Array.from({ length: count }, (_, i) => {
         const seg = segments[Math.min(i, segments.length - 1)] || {};
@@ -739,7 +741,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
           start: i * slice,
           end: (i + 1) * slice,
           title: `Kapitel ${i + 1}`,
-          text: (seg.text || "").slice(0, 260),
+          text: (seg.text || "").slice(0, MAX_SLIDE_TEXT_CHARS),
           visualPrompt: seg.text || `Moodboard scene ${i + 1}`,
           image: imageFromPrompt(seg.text || `Moodboard scene ${i + 1}`),
           media: imageFromPrompt(seg.text || `Moodboard scene ${i + 1}`),
@@ -1625,7 +1627,8 @@ ${JSON.stringify(segments.slice(0, 25))}`
       }
       const nextSlide = state.slides[slideIndex + 1];
       const timeToEnd = Math.max(0, slide.end - time);
-      const crossfadeWindow = Math.min(RENDER_TRANSITION_SECONDS, Math.max(MIN_CROSSFADE_WINDOW, (slide.end - slide.start) * RENDER_TRANSITION_RATIO));
+      const targetWindow = (slide.end - slide.start) * RENDER_TRANSITION_RATIO;
+      const crossfadeWindow = Math.min(RENDER_TRANSITION_SECONDS, Math.max(MIN_CROSSFADE_WINDOW, targetWindow));
       const fadeOut = nextSlide ? clamp(1 - (timeToEnd / crossfadeWindow), 0, 1, 0) : 0;
       const fadeIn = smoothstep(fadeOut);
       const baseAlpha = 1 - fadeIn;
