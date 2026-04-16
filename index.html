@@ -375,7 +375,7 @@ Gib NUR JSON zurück:
   ]
 }
 Regeln:
-- 5 to 14 Slides
+- 5 bis 14 Slides
 - Zeiten lückenlos, logisch, passend zur Story
 - Text kurz, modern, animaker-style
 - VisualPrompt beschreibt passendes Bildmotiv
@@ -553,7 +553,10 @@ ${JSON.stringify(segments.slice(0, 25))}`
       setStatus(`${files.length} eigene Bilder hinzugefügt.`);
       if (state.customImages.length && state.slides.length) {
         state.slides.forEach((slide, i) => {
-          if (!slide.image && state.customImages[i]) slide.image = state.customImages[i];
+          if (slide.image.includes("picsum.photos") && state.customImages[i]) {
+            slide.image = state.customImages[i];
+            refreshRenderedSlide(i);
+          }
         });
         createSlidesEditor();
       }
