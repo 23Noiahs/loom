@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Videomaker – Single File</title>
+  <title>AI Videomaker – Eine Datei</title>
   <style>
     :root {
       --bg: #0f172a;
@@ -160,7 +160,7 @@
       <input id="voiceInput" type="file" accept="audio/mpeg,audio/mp3" />
       <div class="row">
         <button id="generateBtn">Jetzt analysieren & Video bauen</button>
-        <button id="playPauseBtn" class="ghost" disabled>Play/Pause</button>
+        <button id="playPauseBtn" class="ghost" disabled>Wiedergabe/Pause</button>
       </div>
       <div class="row">
         <div>
@@ -204,6 +204,11 @@
     const MINISTRAL_MODEL = "ministral-8b-2512";
     const TRANSCRIBE_ENDPOINT = "https://api.mistral.ai/v1/audio/transcriptions";
     const CHAT_ENDPOINT = "https://api.mistral.ai/v1/chat/completions";
+    const DEFAULT_MUSIC_VOLUME = 0.25;
+    const MAX_TRANSCRIPT_CHARS = 10000;
+    const MIN_SLIDE_DURATION = 1.6;
+    const MIN_SLIDE_GAP = 1.2;
+    const AUDIO_SYNC_THRESHOLD = 0.45;
 
     const el = {
       apiKey: document.getElementById("apiKey"),
@@ -262,11 +267,11 @@
       el.imagesInput.addEventListener("change", onImagesUpload);
       state.voiceAudio.addEventListener("timeupdate", onTimeUpdate);
       state.voiceAudio.addEventListener("ended", () => {
-        el.playPauseBtn.textContent = "Play";
+        el.playPauseBtn.textContent = "Wiedergabe";
         if (state.musicAudio.src) state.musicAudio.pause();
       });
       state.musicAudio.loop = true;
-      state.musicAudio.volume = 0.25;
+      state.musicAudio.volume = DEFAULT_MUSIC_VOLUME;
     }
 
     function setStatus(text, isWarn = false) {
@@ -344,7 +349,7 @@
     }
 
     async function buildSlidesWithMinistral(transcript, segments, duration, apiKey) {
-      const shortTranscript = transcript.slice(0, 10000);
+      const shortTranscript = transcript.slice(0, MAX_TRANSCRIPT_CHARS);
       const payload = {
         model: MINISTRAL_MODEL,
         messages: [
@@ -370,7 +375,7 @@ Gib NUR JSON zurück:
   ]
 }
 Regeln:
-- 5 bis 14 Slides
+- 5 to 14 Slides
 - Zeiten lückenlos, logisch, passend zur Story
 - Text kurz, modern, animaker-style
 - VisualPrompt beschreibt passendes Bildmotiv
@@ -411,7 +416,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
         const safeEnd = Number.isFinite(end) ? Math.min(duration, end) : safeStart + duration / Math.max(1, slides.length);
         return {
           start: safeStart,
-          end: Math.max(safeStart + 1.6, safeEnd),
+          end: Math.max(safeStart + MIN_SLIDE_DURATION, safeEnd),
           title: (s.title || `Slide ${i + 1}`).slice(0, 80),
           text: (s.text || "").slice(0, 240),
           visualPrompt: (s.visualPrompt || s.title || "creative visual").slice(0, 200),
@@ -425,7 +430,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       }
       for (let i = 0; i < slides.length - 1; i++) {
         if (slides[i].end > slides[i + 1].start) slides[i].end = slides[i + 1].start;
-        slides[i].end = Math.max(slides[i].start + 1.2, slides[i].end);
+        slides[i].end = Math.max(slides[i].start + MIN_SLIDE_GAP, slides[i].end);
       }
       slides[slides.length - 1].end = duration;
       return slides;
@@ -568,7 +573,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       const t = state.voiceAudio.currentTime || 0;
       el.seekBar.value = String(Math.floor((t / dur) * 1000));
       activateSlideByTime(t);
-      if (state.musicAudio.src && Math.abs(state.musicAudio.currentTime - t) > 0.45) {
+      if (state.musicAudio.src && Math.abs(state.musicAudio.currentTime - t) > AUDIO_SYNC_THRESHOLD) {
         state.musicAudio.currentTime = t;
       }
     }
@@ -601,7 +606,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       } else {
         state.voiceAudio.pause();
         if (state.musicAudio.src) state.musicAudio.pause();
-        el.playPauseBtn.textContent = "Play";
+        el.playPauseBtn.textContent = "Wiedergabe";
       }
     }
 
