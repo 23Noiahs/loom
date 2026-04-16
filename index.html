@@ -85,6 +85,30 @@
       position: relative;
       box-shadow: inset 0 0 0 1px rgba(148, 163, 184, .14), 0 26px 40px rgba(2, 6, 23, .45);
     }
+    .cat-runner {
+      position: absolute;
+      z-index: 4;
+      left: 0;
+      bottom: 10px;
+      width: 46px;
+      height: 46px;
+      display: grid;
+      place-items: center;
+      font-size: 28px;
+      pointer-events: none;
+      filter: drop-shadow(0 6px 10px rgba(0, 0, 0, .45));
+    }
+    .cat-runner::after {
+      content: "";
+      position: absolute;
+      top: 22px;
+      left: 41px;
+      width: 28px;
+      height: 3px;
+      background: linear-gradient(90deg, rgba(255,255,255,.8), rgba(255,255,255,.1));
+      border-radius: 999px;
+      opacity: .7;
+    }
     .slide {
       position: absolute; inset: 0;
       opacity: 0; transform: scale(1.04);
@@ -143,7 +167,7 @@
       to { transform: translateY(0); opacity: 1; }
     }
     .txt h3 { margin: 0 0 8px; font-size: clamp(1rem, 2.5vw, 2rem); }
-    .txt p { margin: 0; color: #dbeafe; font-size: clamp(.86rem, 1.4vw, 1.05rem); white-space: pre-line; }
+    .txt p { margin: 0; color: #dbeafe; font-size: clamp(.86rem, 1.4vw, 1.05rem); white-space: pre-line; max-height: 52vh; overflow: hidden; }
     .txt.motion-float .txt-title { animation: titleFloat 3.2s ease-in-out infinite; }
     .txt.motion-pulse .txt-body { animation: bodyPulse 2.8s ease-in-out infinite; }
     .txt.motion-slide .txt-title,
@@ -353,8 +377,15 @@
 
     <section class="card grid">
       <h2>1) MP3 hochladen und AI Video erstellen</h2>
+      <label for="generationMode">Modus</label>
+      <select id="generationMode">
+        <option value="classic">Klassisch: komplette Slides aus Transkript generieren</option>
+        <option value="pptx">PPTX-Modus: vorhandene Folien analysieren + mit Voice synchronisieren</option>
+      </select>
       <label for="voiceInput">Voice MP3 (max. 20 Minuten)</label>
       <input id="voiceInput" type="file" accept="audio/mpeg,audio/mp3" />
+      <label for="pptxInput">PPTX (nur für PPTX-Modus)</label>
+      <input id="pptxInput" type="file" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation" disabled />
       <div class="row">
         <button id="generateBtn">Jetzt analysieren & Video bauen</button>
         <button id="playPauseBtn" class="ghost" disabled>Wiedergabe/Pause</button>
@@ -428,6 +459,7 @@
     </section>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script>
     const VOXTRAL_MODEL = "voxtral-mini-2507";
     const STORYBOARD_MODEL = "mistral-small-2506";
@@ -446,6 +478,7 @@
     const MAX_RENDER_TEXT_LINES = 6;
     const MIN_MEANINGFUL_SLIDE_TEXT_CHARS = 90;
     const MIN_TRANSCRIPT_OVERLAP_THRESHOLD = 0.08;
+    const MAX_PPTX_SLIDES = 40;
     const METRIC_TOKEN_REGEX = /\b\d{1,3}%\b|\b\d+(?:[.,]\d+)?\s?(?:k|m|x)\b/i;
     const MONEY_TOKEN_REGEX = /\b(?:€|\$)\s?\d+(?:[.,]\d+)?\b|\b\d+(?:[.,]\d+)?\s?(?:€|\$)\b/;
     const AUDIO_SYNC_THRESHOLD = 0.45;
@@ -477,6 +510,8 @@
       codeStatus: document.getElementById("codeStatus"),
       budgetBadge: document.getElementById("budgetBadge"),
       voiceInput: document.getElementById("voiceInput"),
+      generationMode: document.getElementById("generationMode"),
+      pptxInput: document.getElementById("pptxInput"),
       generateBtn: document.getElementById("generateBtn"),
       playPauseBtn: document.getElementById("playPauseBtn"),
       continueEditBtn: document.getElementById("continueEditBtn"),
@@ -513,7 +548,9 @@
       duration: 0,
       activeSlide: -1,
       renderBusy: false,
-      drag: null
+      drag: null,
+      generationMode: "classic",
+      catSlideIndex: -1
     };
 
     init();
@@ -530,6 +567,7 @@
       });
 
       el.generateBtn.addEventListener("click", generateVideoFlow);
+      el.generationMode.addEventListener("change", onGenerationModeChange);
       el.playPauseBtn.addEventListener("click", togglePlayPause);
       el.prevSlideBtn.addEventListener("click", () => jumpToSlide(state.activeSlide - 1));
       el.nextSlideBtn.addEventListener("click", () => jumpToSlide(state.activeSlide + 1));
@@ -546,6 +584,7 @@
       el.activeBackgroundMode.addEventListener("change", onActiveBackgroundModeChange);
       el.gradientPreset.addEventListener("change", onGradientPresetChange);
       state.voiceAudio.addEventListener("timeupdate", onTimeUpdate);
+      onGenerationModeChange();
       state.voiceAudio.addEventListener("ended", () => {
         el.playPauseBtn.textContent = "Wiedergabe";
         if (state.musicAudio.src) state.musicAudio.pause();
@@ -568,36 +607,55 @@
       localStorage.setItem(STORAGE_KEY_BUDGET, String(value));
     }
 
+    function onGenerationModeChange() {
+      state.generationMode = el.generationMode.value === "pptx" ? "pptx" : "classic";
+      el.pptxInput.disabled = state.generationMode !== "pptx";
+      setStatus(state.generationMode === "pptx"
+        ? "PPTX-Modus aktiv: Voice + PPTX werden gemeinsam analysiert."
+        : "Klassischer Modus aktiv: Slides werden vollautomatisch erzeugt.");
+    }
+
     async function generateVideoFlow() {
       try {
         const apiKey = el.apiKey.value.trim();
-        const file = el.voiceInput.files?.[0];
+        const voiceFile = el.voiceInput.files?.[0];
+        const pptxFile = el.pptxInput.files?.[0];
         if (!apiKey) return setStatus("Bitte API Key eingeben.", true);
-        if (!file) return setStatus("Bitte zuerst eine MP3 auswählen.", true);
-        const duration = await readAudioDuration(file);
+        if (!voiceFile) return setStatus("Bitte zuerst eine MP3 auswählen.", true);
+        if (state.generationMode === "pptx" && !pptxFile) return setStatus("Bitte im PPTX-Modus eine .pptx Datei hochladen.", true);
+        const duration = await readAudioDuration(voiceFile);
         if (duration > 20 * 60) return setStatus("MP3 ist länger als 20 Minuten.", true);
         state.duration = duration;
 
         toggleWorking(true, "Voxtral analysiert die MP3...");
-        const transcriptData = await transcribeWithVoxtral(file, apiKey);
+        const transcriptData = await transcribeWithVoxtral(voiceFile, apiKey);
         state.transcript = transcriptData.text;
         const segments = collectSegments(transcriptData, duration);
 
-        const willTrimTranscript = state.transcript.length > MAX_TRANSCRIPT_CHARS_FOR_PROMPT;
-        setStatus(willTrimTranscript
-          ? "Mistral Small erstellt Storyboard (Transkript-Auszug für lange Audios)..."
-          : "Mistral Small erstellt Storyboard und Animation-Plan...");
-        const aiSlides = await buildSlidesWithMinistral(state.transcript, segments, duration, apiKey);
-        state.slides = normalizeSlides(aiSlides, segments, duration);
+        if (state.generationMode === "pptx") {
+          setStatus("PPTX wird ausgelesen und mit Mistral Small + Voxtral synchronisiert...");
+          const pptxSlides = await extractPptxSlides(pptxFile);
+          const planSlides = await buildSlidesFromPptxWithMistral(pptxSlides, state.transcript, segments, duration, apiKey);
+          state.slides = normalizePptxSlides(planSlides, pptxSlides, segments, duration);
+        } else {
+          const willTrimTranscript = state.transcript.length > MAX_TRANSCRIPT_CHARS_FOR_PROMPT;
+          setStatus(willTrimTranscript
+            ? "Mistral Small erstellt Storyboard (Transkript-Auszug für lange Audios)..."
+            : "Mistral Small erstellt Storyboard und Animation-Plan...");
+          const aiSlides = await buildSlidesWithMinistral(state.transcript, segments, duration, apiKey);
+          state.slides = normalizeSlides(aiSlides, segments, duration);
+        }
 
         createStageAndTimeline();
         createSlidesEditor();
-        const voiceURL = URL.createObjectURL(file);
+        const voiceURL = URL.createObjectURL(voiceFile);
         state.voiceAudio.src = voiceURL;
 
         el.playPauseBtn.disabled = false;
         el.continueEditBtn.disabled = false;
-        setStatus("Fertig. Vorschau bereit – du kannst jetzt weiter bearbeiten. (Visuals: Platzhalterbilder)");
+        setStatus(state.generationMode === "pptx"
+          ? "Fertig. PPTX + Voice sind synchronisiert, Vorschau bereit."
+          : "Fertig. Vorschau bereit – du kannst jetzt weiter bearbeiten.");
       } catch (error) {
         console.error(error);
         setStatus(`Fehler: ${error.message}`, true);
@@ -698,6 +756,198 @@ ${JSON.stringify(segments.slice(0, 25))}`
       const raw = data?.choices?.[0]?.message?.content || "";
       const parsed = parseJsonFromLLM(raw);
       return parsed?.slides || [];
+    }
+
+    async function buildSlidesFromPptxWithMistral(pptxSlides, transcript, segments, duration, apiKey) {
+      const condensedSlides = pptxSlides.slice(0, MAX_PPTX_SLIDES).map((slide, idx) => ({
+        index: idx + 1,
+        title: String(slide.title || `Folie ${idx + 1}`).slice(0, 96),
+        text: String(slide.text || "").slice(0, 240)
+      }));
+      const payload = {
+        model: STORYBOARD_MODEL,
+        messages: [
+          { role: "system", content: "You design synchronized video slides. Return JSON only, without markdown." },
+          {
+            role: "user",
+            content:
+`Nimm die gelieferten PowerPoint-Folien als Basis und synchronisiere sie mit dem Audio-Transkript.
+Länge in Sekunden: ${Math.round(duration)}.
+Gib NUR JSON zurück:
+{
+  "slides":[
+    {
+      "start":0,
+      "end":8,
+      "title":"...",
+      "text":"...",
+      "effect":"fade|zoom-in|zoom-out|pan-left|pan-right|pop",
+      "textMotion":"rise|float|pulse|slide",
+      "backgroundMode":"media|gradient",
+      "gradientPreset":"neon-night|sunset-flow|ocean-mesh|violet-spotlight|ember-wave",
+      "layout":{"x":10,"y":64,"width":70,"align":"left"},
+      "graphics":[{"type":"badge|circle|timeline","label":"optional","x":70,"y":24,"size":56,"color":"#22d3ee"}]
+    }
+  ]
+}
+Regeln:
+- Nutze die Reihenfolge der gelieferten Folien als Story-Struktur
+- Zeiten müssen lückenlos über die gesamte Dauer verteilt sein
+- Text soll inhaltlich zur Folie + zum Transkript passen und nicht generisch sein
+- max. ${MAX_PPTX_SLIDES} Slides
+PPTX-Folien:
+${JSON.stringify(condensedSlides)}
+Transkript-Auszug:
+${transcript.slice(0, MAX_TRANSCRIPT_CHARS_FOR_PROMPT)}
+Segmenthilfe:
+${JSON.stringify(segments.slice(0, 30))}`
+          }
+        ],
+        temperature: 0.2
+      };
+      const res = await fetch(CHAT_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const msg = await safeError(res);
+        throw new Error(`Mistral-Request (PPTX) fehlgeschlagen (${res.status}): ${msg}`);
+      }
+      const data = await res.json();
+      const raw = data?.choices?.[0]?.message?.content || "";
+      const parsed = parseJsonFromLLM(raw);
+      return Array.isArray(parsed?.slides) ? parsed.slides : [];
+    }
+
+    async function extractPptxSlides(file) {
+      if (!file) return [];
+      if (!window.JSZip) throw new Error("JSZip konnte nicht geladen werden. Bitte Seite neu laden.");
+      const zip = await window.JSZip.loadAsync(file);
+      const slideXmlPaths = Object.keys(zip.files)
+        .filter((path) => /^ppt\/slides\/slide\d+\.xml$/i.test(path))
+        .sort((a, b) => Number(a.match(/\d+/)?.[0] || 0) - Number(b.match(/\d+/)?.[0] || 0))
+        .slice(0, MAX_PPTX_SLIDES);
+      const slides = [];
+      for (const slidePath of slideXmlPaths) {
+        const xml = await zip.file(slidePath)?.async("string");
+        if (!xml) continue;
+        const texts = Array.from(xml.matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)).map((m) => decodeXmlEntities(m[1]));
+        const title = sanitizeSlideSentence(texts[0] || "") || slidePath.replace(/^.*slide(\d+)\.xml$/i, "Folie $1");
+        const text = sanitizeSlideText(texts.slice(1).join(" ").trim()) || title;
+        const media = await extractPptxSlideImage(zip, slidePath, xml);
+        slides.push({
+          title: title.slice(0, 96),
+          text: text.slice(0, MAX_SLIDE_TEXT_CHARS),
+          media: media?.src || "",
+          mediaType: media?.type || ""
+        });
+      }
+      if (!slides.length) throw new Error("Keine Folien aus der PPTX lesbar.");
+      return slides;
+    }
+
+    async function extractPptxSlideImage(zip, slidePath, slideXml) {
+      const embeds = Array.from(slideXml.matchAll(/<a:blip[^>]*r:embed="([^"]+)"/g)).map((m) => m[1]).filter(Boolean);
+      if (!embeds.length) return null;
+      const relPath = slidePath.replace("ppt/slides/", "ppt/slides/_rels/") + ".rels";
+      const relXml = await zip.file(relPath)?.async("string");
+      if (!relXml) return null;
+      const relMap = {};
+      Array.from(relXml.matchAll(/<Relationship[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"/g)).forEach((m) => {
+        relMap[m[1]] = m[2];
+      });
+      for (const embedId of embeds) {
+        const target = relMap[embedId];
+        if (!target) continue;
+        const fullPath = resolvePptxTargetPath(slidePath, target);
+        const entry = zip.file(fullPath);
+        if (!entry) continue;
+        const ext = (fullPath.split(".").pop() || "").toLowerCase();
+        const mime = ext === "png" ? "image/png"
+          : ext === "jpg" || ext === "jpeg" ? "image/jpeg"
+          : ext === "gif" ? "image/gif"
+          : ext === "webp" ? "image/webp"
+          : "";
+        if (!mime) continue;
+        const b64 = await entry.async("base64");
+        return { src: `data:${mime};base64,${b64}`, type: "image" };
+      }
+      return null;
+    }
+
+    function resolvePptxTargetPath(slidePath, target) {
+      const base = slidePath.split("/").slice(0, -1);
+      const parts = String(target || "").replace(/\\/g, "/").split("/");
+      const stack = [...base];
+      parts.forEach((part) => {
+        if (!part || part === ".") return;
+        if (part === "..") stack.pop();
+        else stack.push(part);
+      });
+      return stack.join("/");
+    }
+
+    function decodeXmlEntities(value) {
+      return String(value || "")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, "\"")
+        .replace(/&apos;/g, "'");
+    }
+
+    function normalizePptxSlides(aiSlides, pptxSlides, segments, duration) {
+      const sourceSlides = Array.isArray(pptxSlides) ? pptxSlides.slice(0, MAX_PPTX_SLIDES) : [];
+      const count = Math.max(1, sourceSlides.length || (Array.isArray(aiSlides) ? aiSlides.length : 0));
+      const plan = Array.isArray(aiSlides) ? aiSlides.slice(0, count) : [];
+      const averageSlideDuration = duration / Math.max(1, count);
+      let slides = Array.from({ length: count }, (_, i) => {
+        const planned = plan[i] || {};
+        const source = sourceSlides[Math.min(i, sourceSlides.length - 1)] || {};
+        const start = Number(planned.start);
+        const end = Number(planned.end);
+        const safeStart = Number.isFinite(start) ? Math.max(0, start) : i * averageSlideDuration;
+        const safeEnd = Number.isFinite(end) ? Math.min(duration, end) : safeStart + averageSlideDuration;
+        const title = normalizeSlideTitle(planned.title || source.title || `Folie ${i + 1}`);
+        const text = composeSlideText({
+          modelText: planned.text || source.text || "",
+          title,
+          start: safeStart,
+          end: Math.max(safeStart + MIN_SLIDE_DURATION, safeEnd),
+          segments
+        });
+        return {
+          start: safeStart,
+          end: Math.max(safeStart + MIN_SLIDE_DURATION, safeEnd),
+          title,
+          text,
+          visualPrompt: title,
+          image: source.media || imageFromPrompt(title),
+          media: source.media || imageFromPrompt(title),
+          mediaType: source.mediaType || "image",
+          backgroundMode: source.media ? "media" : normalizeBackgroundMode(planned.backgroundMode),
+          gradientPreset: normalizeGradientPreset(planned.gradientPreset),
+          effect: normalizeEffect(planned.effect || SLIDE_EFFECTS[i % SLIDE_EFFECTS.length]),
+          layout: normalizeLayout(planned.layout, i),
+          textMotion: normalizeTextMotion(planned.textMotion || TEXT_MOTIONS[i % TEXT_MOTIONS.length]),
+          graphics: normalizeGraphics(planned.graphics, title, text, i),
+          autoImage: !source.media
+        };
+      }).sort((a, b) => a.start - b.start);
+      slides[0].start = 0;
+      for (let i = 1; i < slides.length; i++) {
+        if (slides[i].start < slides[i - 1].end) slides[i].start = slides[i - 1].end;
+      }
+      for (let i = 0; i < slides.length - 1; i++) {
+        if (slides[i].end > slides[i + 1].start) slides[i].end = slides[i + 1].start;
+        slides[i].end = Math.max(slides[i].start + MIN_SLIDE_GAP, slides[i].end);
+      }
+      slides[slides.length - 1].end = duration;
+      return slides;
     }
 
     function normalizeSlides(aiSlides, segments, duration) {
@@ -869,6 +1119,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       el.videoStage.innerHTML = "";
       el.timeline.innerHTML = "";
       state.activeSlide = -1;
+      state.catSlideIndex = -1;
       const dur = Math.max(1, state.duration);
 
       state.slides.forEach((slide, idx) => {
@@ -907,6 +1158,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
         seg.addEventListener("click", () => jumpToSlide(idx));
         el.timeline.appendChild(seg);
       });
+      ensureCatRunner();
       el.timelineMeta.textContent = `${state.slides.length} Slides · ${formatTime(dur)} Gesamtlänge`;
       activateSlide(0);
     }
@@ -1175,6 +1427,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
 
     function activateSlide(index) {
       if (index === state.activeSlide) return;
+      const previousIndex = state.activeSlide;
       state.activeSlide = index;
       el.videoStage.querySelectorAll(".slide").forEach((node, idx) => {
         node.classList.toggle("active", idx === index);
@@ -1190,6 +1443,33 @@ ${JSON.stringify(segments.slice(0, 25))}`
       });
       el.activeSlideMeta.textContent = `Slide ${index + 1} / ${state.slides.length}`;
       syncActiveDesignControls();
+      triggerCatTransition(previousIndex, index);
+    }
+
+    function ensureCatRunner() {
+      if (el.videoStage.querySelector(".cat-runner")) return;
+      const cat = document.createElement("div");
+      cat.className = "cat-runner";
+      cat.textContent = "🐈";
+      el.videoStage.appendChild(cat);
+    }
+
+    function triggerCatTransition(fromIndex, toIndex) {
+      const cat = el.videoStage.querySelector(".cat-runner");
+      if (!cat || toIndex < 0 || !state.slides.length) return;
+      const usableWidth = Math.max(0, el.videoStage.clientWidth - 52);
+      const denom = Math.max(1, state.slides.length - 1);
+      const fromRatio = fromIndex < 0 ? 0 : fromIndex / denom;
+      const toRatio = toIndex / denom;
+      const fromX = Math.round(usableWidth * fromRatio);
+      const toX = Math.round(usableWidth * toRatio);
+      cat.style.transform = `translate(${fromX}px, 0)`;
+      cat.animate([
+        { transform: `translate(${fromX}px, 0)` },
+        { transform: `translate(${Math.round((fromX + toX) / 2)}px, -18px)` },
+        { transform: `translate(${toX}px, 0)` }
+      ], { duration: 620, easing: "cubic-bezier(.2,.8,.2,1)", fill: "forwards" });
+      state.catSlideIndex = toIndex;
     }
 
     function jumpToSlide(index) {
@@ -1677,7 +1957,8 @@ ${JSON.stringify(segments.slice(0, 25))}`
       await new Promise((resolve) => {
         const tick = () => {
           const elapsed = (performance.now() - startedAt) / 1000;
-          const t = Math.min(state.duration, Math.max(voice.currentTime || elapsed, elapsed));
+          const voiceTime = Number.isFinite(voice.currentTime) ? voice.currentTime : elapsed;
+          const t = Math.min(state.duration, Math.max(0, voiceTime || elapsed));
           drawRenderFrame(ctx, canvas, t, mediaCache);
           if (t >= state.duration - 0.03) {
             voice.pause();
@@ -1732,6 +2013,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
         const nextTime = nextSlide.start + Math.max(0, time - slide.end + crossfadeWindow);
         drawRenderSlideLayer(ctx, width, height, nextSlide, nextTime, mediaCache, fadeIn);
       }
+      drawRenderCatLayer(ctx, width, height, slideIndex, nextSlide ? slideIndex + 1 : slideIndex, fadeIn, !!nextSlide);
     }
 
     function drawRenderSlideLayer(ctx, width, height, slide, time, mediaCache, alpha = 1) {
@@ -1744,6 +2026,38 @@ ${JSON.stringify(segments.slice(0, 25))}`
       drawRenderGraphics(ctx, width, height, slide, progress, time);
       drawRenderText(ctx, width, height, slide, progress, time);
       ctx.restore();
+    }
+
+    function drawRenderCatLayer(ctx, width, height, fromIndex, toIndex, transitionProgress, hasNext) {
+      const total = Math.max(1, state.slides.length - 1);
+      const startX = (fromIndex / total) * (width - 62) + 18;
+      const endX = (toIndex / total) * (width - 62) + 18;
+      const p = hasNext ? clamp(transitionProgress, 0, 1, 0) : 1;
+      const x = startX + ((endX - startX) * p);
+      const y = height - 36 - Math.sin(p * Math.PI) * (hasNext ? 14 : 0);
+      ctx.save();
+      ctx.globalAlpha = 0.92;
+      drawPixelCat(ctx, x, y, 2);
+      ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x + 8, y - 2);
+      ctx.lineTo(x + 24, y - 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawPixelCat(ctx, x, y, scale = 2) {
+      const pixels = [
+        [0,2],[1,2],[2,2],[3,2],[4,2],[5,2],
+        [0,3],[1,3],[2,3],[3,3],[4,3],[5,3],
+        [1,1],[4,1],[2,4],[3,4],[1,5],[4,5]
+      ];
+      ctx.fillStyle = "#f8fafc";
+      pixels.forEach(([px, py]) => ctx.fillRect(Math.round(x + px * scale), Math.round(y + py * scale), scale, scale));
+      ctx.fillStyle = "#0f172a";
+      ctx.fillRect(Math.round(x + 2 * scale), Math.round(y + 3 * scale), scale, scale);
+      ctx.fillRect(Math.round(x + 3 * scale), Math.round(y + 3 * scale), scale, scale);
     }
 
     function smoothstep(value) {
@@ -1929,15 +2243,17 @@ ${JSON.stringify(segments.slice(0, 25))}`
           return;
         }
         if (type === "circle") {
-          const s = clamp(Number(graphic.size), 20, 100, 44) * pulse;
+          const label = String(graphic.label || "●").trim();
+          const dynamicSize = Math.max(Number(graphic.size) || 44, 26 + (label.length * 4));
+          const s = clamp(dynamicSize, 28, 120, 52) * pulse;
           ctx.fillStyle = color;
           ctx.beginPath();
           ctx.arc(x, y, s / 2, 0, Math.PI * 2);
           ctx.fill();
-          ctx.font = `700 ${Math.max(12, Math.round(s * 0.26))}px Inter, system-ui, sans-serif`;
+          ctx.font = `700 ${Math.max(11, Math.round(s * 0.22))}px Inter, system-ui, sans-serif`;
           ctx.textAlign = "center";
           ctx.fillStyle = "white";
-          ctx.fillText(String(graphic.label || "●").slice(0, 8), x, y + 5);
+          ctx.fillText(label.slice(0, 12), x, y + 5);
           ctx.restore();
           return;
         }
@@ -2066,14 +2382,19 @@ ${JSON.stringify(segments.slice(0, 25))}`
 
     function normalizeGraphics(graphics, title, text, idx) {
       const input = Array.isArray(graphics) ? graphics : [];
-      const mapped = input.map((graphic, gIdx) => ({
-        type: normalizeGraphicType(graphic?.type),
-        label: String(graphic?.label || "").slice(0, 40),
-        x: clamp(Number(graphic?.x), 0, 95, 50 + (gIdx * 5)),
-        y: clamp(Number(graphic?.y), 5, 95, 24 + (gIdx * 7)),
-        size: clamp(Number(graphic?.size), 20, 100, 48),
-        color: normalizeColor(graphic?.color)
-      }));
+      const mapped = input.map((graphic, gIdx) => {
+        const rawLabel = String(graphic?.label || "").trim().slice(0, 40);
+        let type = normalizeGraphicType(graphic?.type);
+        if (type === "circle" && /[a-zäöüß]{5,}/i.test(rawLabel)) type = "badge";
+        return {
+          type,
+          label: rawLabel,
+          x: clamp(Number(graphic?.x), 0, 95, 50 + (gIdx * 5)),
+          y: clamp(Number(graphic?.y), 5, 95, 24 + (gIdx * 7)),
+          size: clamp(Number(graphic?.size), 20, 100, 48),
+          color: normalizeColor(graphic?.color)
+        };
+      });
       if (mapped.length) return mapped;
       return deriveAutoGraphics(title, text, idx);
     }
@@ -2240,10 +2561,13 @@ ${JSON.stringify(segments.slice(0, 25))}`
         g.style.top = `${clamp(Number(graphic.y), 0, 95, 30)}%`;
         g.style.background = graphic.color || "#22d3ee";
         if (type === "circle") {
-          const s = clamp(Number(graphic.size), 20, 100, 44);
+          const label = String(graphic.label || "●").trim();
+          const dynamicSize = Math.max(Number(graphic.size) || 44, 26 + (label.length * 4));
+          const s = clamp(dynamicSize, 28, 120, 52);
           g.style.width = `${s}px`;
           g.style.height = `${s}px`;
-          g.textContent = (graphic.label || "●").slice(0, 8);
+          g.style.fontSize = `${Math.max(11, Math.round(s * 0.22))}px`;
+          g.textContent = label.slice(0, 12);
         } else if (type === "timeline") {
           const years = String(graphic.label || "Start|Now|Next").split("|").map((y) => y.trim()).filter(Boolean).slice(0, 6);
           years.forEach((year) => {
