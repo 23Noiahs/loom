@@ -510,6 +510,7 @@
     const MIN_TRANSCRIPT_OVERLAP_THRESHOLD = 0.08;
     const MAX_PPTX_SLIDES = 40;
     const MAX_MULTI_AUDIO_FILES = 8;
+    // Browser-side offline audio rendering becomes unstable above this range in typical laptops.
     const MAX_MERGED_AUDIO_SECONDS = 45 * 60;
     const CIRCLE_LABEL_BASE_SIZE = 26;
     const CIRCLE_LABEL_CHAR_FACTOR = 4;
@@ -845,7 +846,11 @@
           throw new Error(`Folie ${i} hat keine Audio-Zuordnung. Bitte Mapping ergänzen.`);
         }
         if ((covered.get(i) || 0) > 1) {
-          throw new Error(`Folie ${i} ist mehrfach gemappt. Bitte Bereiche ohne Überlappung setzen.`);
+          const offenders = mappings
+            .filter((m) => i >= m.startSlide && i <= m.endSlide)
+            .map((m) => `${m.startSlide}-${m.endSlide}`)
+            .join(", ");
+          throw new Error(`Folie ${i} ist mehrfach gemappt (${offenders}). Bitte Bereiche ohne Überlappung setzen.`);
         }
       }
     }
@@ -874,6 +879,10 @@
           if (sourceFiles.length > MAX_MULTI_AUDIO_FILES) return setStatus(`Maximal ${MAX_MULTI_AUDIO_FILES} Audio-Dateien erlaubt.`, true);
           const mappings = buildValidVoiceMappings(slideCount, sourceFiles.length);
           validateVoiceMappingsCoverSlides(mappings, slideCount);
+          const estimatedDuration = mappings.reduce((sum, m) => sum + (sourceFiles[m.audioIndex]?.duration || 0), 0);
+          if (estimatedDuration > MAX_MERGED_AUDIO_SECONDS) {
+            return setStatus(`Gemappte Audios sind zu lang (${formatTime(estimatedDuration)}). Maximal: ${formatTime(MAX_MERGED_AUDIO_SECONDS)}.`, true);
+          }
           toggleWorking(true, "Voxtral analysiert mehrere Audios...");
           const narration = await buildMappedNarrationAudio(sourceFiles, mappings, apiKey);
           state.transcript = narration.transcript;
@@ -945,16 +954,20 @@
 
     async function buildMappedNarrationAudio(sourceFiles, mappings, apiKey) {
       const transcriptions = await Promise.all(sourceFiles.map(async (source, idx) => {
-        const transcriptData = await transcribeWithVoxtral(source.file, apiKey);
-        const duration = Math.max(0.01, Number(source.duration) || await readAudioDuration(source.file));
-        const segments = collectSegments(transcriptData, duration);
-        return {
-          index: idx,
-          file: source.file,
-          duration,
-          transcript: transcriptData.text || "",
-          segments
-        };
+        try {
+          const transcriptData = await transcribeWithVoxtral(source.file, apiKey);
+          const duration = Math.max(0.01, Number(source.duration) || await readAudioDuration(source.file));
+          const segments = collectSegments(transcriptData, duration);
+          return {
+            index: idx,
+            file: source.file,
+            duration,
+            transcript: transcriptData.text || "",
+            segments
+          };
+        } catch (error) {
+          throw new Error(`Audio ${idx + 1} (${source.name || source.file?.name || "unbekannt"}) konnte nicht analysiert werden: ${error.message}`);
+        }
       }));
       const normalizedMappings = [...mappings].sort((a, b) => a.startSlide - b.startSlide || a.endSlide - b.endSlide);
       const combinedChunks = [];
@@ -1015,6 +1028,7 @@
           maxRate = Math.max(maxRate, buf.sampleRate);
         }
         const totalDuration = decoded.reduce((acc, item) => Math.max(acc, item.start + item.buffer.duration), 0);
+        // Defensive guard in case decoded media duration differs from metadata duration.
         if (totalDuration > MAX_MERGED_AUDIO_SECONDS) {
           throw new Error(`Zusammengeführte Audio-Länge überschreitet das Limit (${formatTime(MAX_MERGED_AUDIO_SECONDS)}).`);
         }
