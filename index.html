@@ -209,6 +209,8 @@
     const MIN_SLIDE_DURATION = 1.6;
     const MIN_SLIDE_GAP = 1.2;
     const AUDIO_SYNC_THRESHOLD = 0.45;
+    const STORAGE_KEY_API = "videomaker.apiKey";
+    const STORAGE_KEY_BUDGET = "videomaker.budget";
 
     const el = {
       apiKey: document.getElementById("apiKey"),
@@ -245,8 +247,8 @@
     init();
 
     function init() {
-      const savedKey = localStorage.getItem("loom.apiKey");
-      const savedBudget = Number(localStorage.getItem("loom.budget") || 0);
+      const savedKey = localStorage.getItem(STORAGE_KEY_API);
+      const savedBudget = Number(localStorage.getItem(STORAGE_KEY_BUDGET) || 0);
       if (savedKey) el.apiKey.value = savedKey;
       if (savedBudget) applyBudget(savedBudget, "Aus LocalStorage geladen.");
 
@@ -284,7 +286,7 @@
       el.budgetBadge.textContent = `${value}€`;
       el.codeStatus.textContent = message;
       el.codeStatus.className = isWarn ? "muted warn" : "muted ok";
-      localStorage.setItem("loom.budget", String(value));
+      localStorage.setItem(STORAGE_KEY_BUDGET, String(value));
     }
 
     async function generateVideoFlow() {
@@ -293,7 +295,7 @@
         const file = el.voiceInput.files?.[0];
         if (!apiKey) return setStatus("Bitte API Key eingeben.", true);
         if (!file) return setStatus("Bitte zuerst eine MP3 auswählen.", true);
-        localStorage.setItem("loom.apiKey", apiKey);
+        localStorage.setItem(STORAGE_KEY_API, apiKey);
 
         const duration = await readAudioDuration(file);
         if (duration > 20 * 60) return setStatus("MP3 ist länger als 20 Minuten.", true);
@@ -552,9 +554,12 @@ ${JSON.stringify(segments.slice(0, 25))}`
       state.customImages.push(...urls);
       setStatus(`${files.length} eigene Bilder hinzugefügt.`);
       if (state.customImages.length && state.slides.length) {
+        let customIndex = 0;
         state.slides.forEach((slide, i) => {
-          if (slide.image.includes("picsum.photos") && state.customImages[i]) {
-            slide.image = state.customImages[i];
+          const nextCustom = state.customImages[customIndex];
+          if (slide.image.includes("picsum.photos") && nextCustom) {
+            slide.image = nextCustom;
+            customIndex += 1;
             refreshRenderedSlide(i);
           }
         });
@@ -576,14 +581,18 @@ ${JSON.stringify(segments.slice(0, 25))}`
       const t = state.voiceAudio.currentTime || 0;
       el.seekBar.value = String(Math.floor((t / dur) * 1000));
       activateSlideByTime(t);
-      if (state.musicAudio.src && Math.abs(state.musicAudio.currentTime - t) > AUDIO_SYNC_THRESHOLD) {
+      if (state.musicAudio.src && !state.musicAudio.paused && Math.abs(state.musicAudio.currentTime - t) > AUDIO_SYNC_THRESHOLD) {
         state.musicAudio.currentTime = t;
       }
     }
 
     function activateSlideByTime(t) {
-      const idx = state.slides.findIndex((s, i) => t >= s.start && (i === state.slides.length - 1 ? t <= s.end : t < s.end));
+      const idx = findSlideIndexAtTime(t);
       activateSlide(Math.max(0, idx));
+    }
+
+    function findSlideIndexAtTime(t) {
+      return state.slides.findIndex((s, i) => t >= s.start && (i === state.slides.length - 1 ? t <= s.end : t < s.end));
     }
 
     function activateSlide(index) {
