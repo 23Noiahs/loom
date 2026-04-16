@@ -385,6 +385,7 @@
           </select>
           <button id="applyGradientBtn" type="button" class="ghost">Gradient anwenden</button>
           <button id="applyTimelineStyleBtn" type="button" class="ghost">Timeline-Style Boost</button>
+          <button id="autoBeautyBtn" type="button">Auto-Beauty (alle Slides)</button>
         </div>
       </div>
       <div class="row compact">
@@ -443,6 +444,9 @@
       "ember-wave": { name: "Ember Wave", css: "linear-gradient(120deg, #1f2937 0%, #7c2d12 28%, #dc2626 68%, #fb7185 100%)" }
     };
     const DEFAULT_GRADIENT_PRESET = "neon-night";
+    const BEAUTY_GRADIENT_SEQUENCE = ["neon-night", "ocean-mesh", "violet-spotlight", "sunset-flow", "ember-wave"];
+    const BEAUTY_EFFECT_SEQUENCE = ["pan-left", "zoom-in", "pop", "pan-right", "zoom-out", "fade"];
+    const BEAUTY_MOTION_SEQUENCE = ["float", "rise", "pulse", "slide"];
     const RENDER_PRESETS = {
       draft: { width: 1280, height: 720, bitrate: 3500000, label: "Draft 720p" },
       high: { width: 1920, height: 1080, bitrate: 7000000, label: "High 1080p" }
@@ -474,6 +478,7 @@
       gradientPreset: document.getElementById("gradientPreset"),
       applyGradientBtn: document.getElementById("applyGradientBtn"),
       applyTimelineStyleBtn: document.getElementById("applyTimelineStyleBtn"),
+      autoBeautyBtn: document.getElementById("autoBeautyBtn"),
       renderQuality: document.getElementById("renderQuality"),
       renderBtn: document.getElementById("renderBtn"),
       renderStatus: document.getElementById("renderStatus"),
@@ -519,6 +524,7 @@
       el.renderBtn.addEventListener("click", renderProjectVideo);
       el.applyGradientBtn.addEventListener("click", applyGradientToActiveSlide);
       el.applyTimelineStyleBtn.addEventListener("click", applyTimelineBoostToActiveSlide);
+      el.autoBeautyBtn.addEventListener("click", applyAutoBeautyToProject);
       el.activeBackgroundMode.addEventListener("change", onActiveBackgroundModeChange);
       el.gradientPreset.addEventListener("change", onGradientPresetChange);
       state.voiceAudio.addEventListener("timeupdate", onTimeUpdate);
@@ -647,7 +653,7 @@ Regeln:
 - TextMotion nur aus: rise, float, pulse, slide
 - Optional backgroundMode: media oder gradient; bei gradient auch gradientPreset liefern
 - Layout-Werte Prozent (x/y/width), damit Text frei positionierbar ist
-- Optional Graphics für visuelle Elemente, z.B. Timeline
+- Optional Graphics inhaltlich passend erzeugen (Timeline bei Verlauf/Schritten, Circle für KPI/%, Badge für Highlights/Budget)
 Auszug Transkript:
 ${shortTranscript}
 Segmenthilfe:
@@ -1329,15 +1335,7 @@ ${JSON.stringify(segments.slice(0, 25))}`
       const idx = state.activeSlide;
       const slide = state.slides[idx];
       if (!slide) return;
-      const years = Array.from(new Set(`${slide.title} ${slide.text}`.match(/\b(19|20)\d{2}\b/g) || [])).slice(0, 6);
-      slide.graphics = [{
-        type: "timeline",
-        label: years.length >= 3 ? years.join("|") : "2018|2020|2022|2024",
-        x: 50,
-        y: 50,
-        size: 88,
-        color: "#22d3ee"
-      }];
+      slide.graphics = buildContentGraphics(slide.title, slide.text, idx);
       slide.gradientPreset = "neon-night";
       slide.backgroundMode = "gradient";
       slide.effect = "pan-left";
@@ -1346,6 +1344,31 @@ ${JSON.stringify(segments.slice(0, 25))}`
       createSlidesEditor();
       syncActiveDesignControls();
       setStatus("Timeline-Style Boost auf aktiven Slide angewendet.");
+    }
+
+    function applyAutoBeautyToProject() {
+      if (!state.slides.length) {
+        setStatus("Bitte zuerst Slides erstellen.", true);
+        return;
+      }
+      state.slides.forEach((slide, idx) => {
+        slide.backgroundMode = "gradient";
+        slide.gradientPreset = BEAUTY_GRADIENT_SEQUENCE[idx % BEAUTY_GRADIENT_SEQUENCE.length];
+        slide.effect = BEAUTY_EFFECT_SEQUENCE[idx % BEAUTY_EFFECT_SEQUENCE.length];
+        slide.textMotion = BEAUTY_MOTION_SEQUENCE[idx % BEAUTY_MOTION_SEQUENCE.length];
+        slide.layout = normalizeLayout({
+          ...slide.layout,
+          x: clamp(Number(slide.layout?.x), 8, 88, idx % 2 ? 62 : 10),
+          y: clamp(Number(slide.layout?.y), 20, 82, idx % 2 ? 44 : 64),
+          width: clamp(Number(slide.layout?.width), 44, 86, 66),
+          align: idx % 2 ? "right" : "left"
+        });
+        slide.graphics = buildContentGraphics(slide.title, slide.text, idx);
+        refreshRenderedSlide(idx);
+      });
+      createSlidesEditor();
+      syncActiveDesignControls();
+      setStatus("Auto-Beauty aktiv: Design + content-basierte Objekte für alle Slides gesetzt.");
     }
 
     function syncActiveDesignControls() {
@@ -1794,28 +1817,43 @@ ${JSON.stringify(segments.slice(0, 25))}`
     function drawRenderText(ctx, width, height, slide, progress, time) {
       const layout = normalizeLayout(slide.layout);
       const motion = normalizeTextMotion(slide.textMotion);
-      const boxW = (layout.width / 100) * width;
+      const safeMargin = Math.max(24, width * 0.035);
+      const boxW = clamp((layout.width / 100) * width, width * 0.34, width - safeMargin * 2, width * 0.64);
       const anchorX = (layout.x / 100) * width;
       const centerY = (layout.y / 100) * height;
-      let x = anchorX;
-      if (layout.align === "center") x = anchorX - boxW / 2;
-      if (layout.align === "right") x = anchorX - boxW;
+      const titleFont = clamp(Math.round(width * 0.042), 28, 56, 44);
+      const bodyFont = clamp(Math.round(width * 0.02), 18, 31, 26);
+      const bodyLineHeight = Math.round(bodyFont * 1.22);
+      const maxBodyLines = 4;
+      const boxPaddingX = 16;
+      const boxPaddingTop = 14;
+      const boxPaddingBottom = 14;
+      const boxH = boxPaddingTop + titleFont + 14 + (bodyLineHeight * maxBodyLines) + boxPaddingBottom;
+      let boxLeft = anchorX;
+      if (layout.align === "center") boxLeft = anchorX - boxW / 2;
+      if (layout.align === "right") boxLeft = anchorX - boxW;
+      boxLeft = clamp(boxLeft, safeMargin, width - boxW - safeMargin, safeMargin);
+      let boxTop = centerY - boxH / 2;
       const bob = motion === "float" ? Math.sin(time * 2.2) * 4 : 0;
+      boxTop = clamp(boxTop + bob, safeMargin, height - boxH - safeMargin, safeMargin);
       const alpha = motion === "pulse" ? 0.85 + Math.sin(time * 2.7) * 0.15 : 1;
       ctx.save();
       ctx.globalAlpha = alpha;
       ctx.fillStyle = "rgba(2, 6, 23, 0.38)";
-      roundRect(ctx, x - 12, centerY - 56 + bob, boxW + 24, 122, 14);
+      roundRect(ctx, boxLeft - boxPaddingX, boxTop, boxW + boxPaddingX * 2, boxH, 14);
       ctx.fill();
 
       ctx.fillStyle = "#ffffff";
       ctx.textAlign = layout.align === "right" ? "right" : layout.align === "center" ? "center" : "left";
-      const tx = layout.align === "right" ? x + boxW : layout.align === "center" ? x + boxW / 2 : x;
+      const textStartX = boxLeft;
+      const tx = layout.align === "right" ? textStartX + boxW : layout.align === "center" ? textStartX + boxW / 2 : textStartX;
       const reveal = motion === "slide" ? clamp(progress * 1.5, 0, 1, 1) : 1;
-      ctx.font = "700 56px Inter, system-ui, sans-serif";
-      ctx.fillText(String(slide.title || "").slice(0, 80), tx, centerY - 15 + bob, Math.max(120, boxW * reveal));
-      ctx.font = "500 31px Inter, system-ui, sans-serif";
-      wrapCanvasText(ctx, String(slide.text || "").slice(0, 240), tx, centerY + 24 + bob, boxW, 34);
+      ctx.font = `700 ${titleFont}px Inter, system-ui, sans-serif`;
+      const titleY = boxTop + boxPaddingTop + titleFont;
+      ctx.fillText(String(slide.title || "").slice(0, 80), tx, titleY, Math.max(120, boxW * reveal));
+      ctx.font = `500 ${bodyFont}px Inter, system-ui, sans-serif`;
+      const bodyY = titleY + 14 + bodyFont;
+      wrapCanvasText(ctx, String(slide.text || "").slice(0, 240), tx, bodyY, boxW, bodyLineHeight, maxBodyLines);
       ctx.restore();
     }
 
@@ -1830,9 +1868,9 @@ ${JSON.stringify(segments.slice(0, 25))}`
       ctx.closePath();
     }
 
-    function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight) {
+    function wrapCanvasText(ctx, text, x, y, maxWidth, lineHeight, maxLines = 4) {
       const words = String(text || "").split(/\s+/).filter(Boolean);
-      if (!words.length) return;
+      if (!words.length) return 0;
       let line = "";
       let lines = 0;
       for (const word of words) {
@@ -1841,12 +1879,16 @@ ${JSON.stringify(segments.slice(0, 25))}`
           ctx.fillText(line, x, y + lines * lineHeight);
           line = word;
           lines += 1;
-          if (lines >= 4) break;
+          if (lines >= maxLines) break;
         } else {
           line = test;
         }
       }
-      if (lines < 4 && line) ctx.fillText(line, x, y + lines * lineHeight);
+      if (lines < maxLines && line) {
+        ctx.fillText(line, x, y + lines * lineHeight);
+        lines += 1;
+      }
+      return lines;
     }
 
     function normalizeEffect(effect) {
@@ -1856,11 +1898,18 @@ ${JSON.stringify(segments.slice(0, 25))}`
     function normalizeLayout(layout, idx = 0) {
       const defaultY = idx % 2 ? 52 : 66;
       const safe = layout && typeof layout === "object" ? layout : {};
+      const align = normalizeAlign(safe.align);
+      const width = clamp(Number(safe.width), 30, 95, 64);
+      const defaultX = align === "right" ? 92 : align === "center" ? 50 : 8;
+      let x = clamp(Number(safe.x), 0, 100, defaultX);
+      if (align === "left") x = clamp(x, 0, 100 - width, defaultX);
+      if (align === "center") x = clamp(x, width / 2, 100 - width / 2, 50);
+      if (align === "right") x = clamp(x, width, 100, 92);
       return {
-        x: clamp(Number(safe.x), 0, 90, 8),
+        x,
         y: clamp(Number(safe.y), 0, 90, defaultY),
-        width: clamp(Number(safe.width), 30, 95, 64),
-        align: normalizeAlign(safe.align)
+        width,
+        align
       };
     }
 
@@ -1883,16 +1932,42 @@ ${JSON.stringify(segments.slice(0, 25))}`
     }
 
     function deriveAutoGraphics(title, text, idx) {
+      return buildContentGraphics(title, text, idx);
+    }
+
+    function buildContentGraphics(title, text, idx) {
       const content = `${title || ""} ${text || ""}`;
-      const years = Array.from(new Set(content.match(/\b(19|20)\d{2}\b/g) || [])).slice(0, 5);
-      if (years.length >= 2) {
+      const timelineLabels = extractTimelineLabels(content);
+      if (timelineLabels.length >= 3) {
         return [{
           type: "timeline",
-          label: years.join("|"),
+          label: timelineLabels.slice(0, 6).join("|"),
           x: 50,
-          y: 26,
-          size: 72,
+          y: 50,
+          size: 88,
           color: "#22d3ee"
+        }];
+      }
+      const metric = content.match(/\b\d{1,3}%\b|\b\d+(?:[.,]\d+)?\s?(?:k|m|x|€|\$)\b/i)?.[0];
+      if (metric) {
+        return [{
+          type: "circle",
+          label: metric.replace(/\s+/g, "").slice(0, 6),
+          x: 78,
+          y: 24,
+          size: 68,
+          color: "#a78bfa"
+        }];
+      }
+      const money = content.match(/\b(?:€|\$)\s?\d+(?:[.,]\d+)?\b|\b\d+(?:[.,]\d+)?\s?(?:€|\$)\b/)?.[0];
+      if (money) {
+        return [{
+          type: "badge",
+          label: `Budget ${money.replace(/\s+/g, "")}`.slice(0, 26),
+          x: 74,
+          y: 20,
+          size: 52,
+          color: "#f59e0b"
         }];
       }
       if (idx % 3 === 0) {
@@ -1905,6 +1980,20 @@ ${JSON.stringify(segments.slice(0, 25))}`
           color: "#a78bfa"
         }];
       }
+      return [];
+    }
+
+    function extractTimelineLabels(content) {
+      const years = Array.from(new Set(content.match(/\b(19|20)\d{2}\b/g) || [])).slice(0, 6);
+      if (years.length >= 3) return years;
+      const steps = content
+        .split(/\n|[|]|->|=>|>|•|·|,|;/g)
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => part.replace(/^(\d+[\).:-]\s*)/, ""))
+        .filter((part) => part.length >= 2)
+        .slice(0, 6);
+      if (steps.length >= 3) return steps.map((step) => step.slice(0, 10));
       return [];
     }
 
